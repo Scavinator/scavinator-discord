@@ -2,44 +2,36 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.createTable('ItemChannels', {
+    await queryInterface.createTable('team_scav_hunts', {
       id: {
         allowNull: false,
         autoIncrement: true,
         primaryKey: true,
         type: Sequelize.INTEGER
       },
-      items_channel_id: {
+      discord_items_channel_id: {
         allowNull: false,
         type: Sequelize.TEXT
       },
-      pages_channel_id: {
+      discord_pages_channel_id: {
         allowNull: false,
         type: Sequelize.TEXT
       },
-      pages_message_id: {
+      discord_pages_message_id: {
         allowNull: false,
         type: Sequelize.TEXT
       },
-      items_message_id: {
+      discord_items_message_id: {
         allowNull: false,
         type: Sequelize.TEXT
       },
-      guild_id: {
+      discord_guild_id: {
         allowNull: false,
         type: Sequelize.TEXT
-      },
-      createdAt: {
-        allowNull: false,
-        type: Sequelize.DATE
-      },
-      updatedAt: {
-        allowNull: false,
-        type: Sequelize.DATE
       }
     });
   },
   async down(queryInterface, Sequelize) {
-    await queryInterface.dropTable('ItemChannels');
+    await queryInterface.dropTable('team_scav_hunts');
   }
 };

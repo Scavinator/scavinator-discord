@@ -2,40 +2,38 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.createTable('PageThreads', {
+    await queryInterface.createTable('pages', {
       id: {
         allowNull: false,
         autoIncrement: true,
         primaryKey: true,
         type: Sequelize.INTEGER
       },
-      items_channel_id: {
+      team_scav_hunt_id: {
         allowNull: false,
-        type: Sequelize.INTEGER
-      },
-      thread_id: {
-        allowNull: false,
-        type: Sequelize.TEXT
+        type: Sequelize.INTEGER,
+        references: {
+          model: {
+            tableName: 'team_scav_hunts'
+          },
+          key: 'id',
+        },
       },
       page_number: {
         allowNull: false,
         type: Sequelize.INTEGER
       },
-      message_id: {
+      discord_thread_id: {
         allowNull: false,
         type: Sequelize.TEXT
       },
-      createdAt: {
+      discord_message_id: {
         allowNull: false,
-        type: Sequelize.DATE
-      },
-      updatedAt: {
-        allowNull: false,
-        type: Sequelize.DATE
+        type: Sequelize.TEXT
       }
     });
   },
   async down(queryInterface, Sequelize) {
-    await queryInterface.dropTable('PageThreads');
+    await queryInterface.dropTable('pages');
   }
 };

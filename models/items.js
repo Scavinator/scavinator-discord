@@ -1,7 +1,7 @@
 import { Model } from 'sequelize';
 
 export default (sequelize, DataTypes) => {
-  class PageThread extends Model {
+  class Item extends Model {
     /**
      * Helper method for defining associations.
      * This method is not a part of Sequelize lifecycle.
@@ -11,16 +11,16 @@ export default (sequelize, DataTypes) => {
       // define association here
     }
   }
-  PageThread.init({
-    // New Page model
-    thread_id: DataTypes.TEXT,
-    message_id: DataTypes.TEXT,
+  Item.init({
+    // Item
+    number: DataTypes.INTEGER,
     page_number: DataTypes.INTEGER,
-    // TeamScavHunt id
-    items_channel_id: DataTypes.INTEGER
+    discord_thread_id: DataTypes.TEXT,
+    team_scav_hunt_id: DataTypes.INTEGER // TeamScavHunt id
   }, {
     sequelize,
-    modelName: 'PageThread',
+    modelName: 'items',
+    timestamps: false
   });
-  return PageThread;
+  return Item;
 };

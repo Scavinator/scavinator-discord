@@ -1,7 +1,7 @@
 import { Model } from 'sequelize';
 
 export default (sequelize, DataTypes) => {
-  class ItemChannel extends Model {
+  class Pages extends Model {
     /**
      * Helper method for defining associations.
      * This method is not a part of Sequelize lifecycle.
@@ -11,17 +11,15 @@ export default (sequelize, DataTypes) => {
       // define association here
     }
   }
-  ItemChannel.init({
-    // TeamScavHunt
-    items_channel_id: DataTypes.TEXT,
-    pages_channel_id: DataTypes.TEXT,
-    items_message_id: DataTypes.TEXT,
-    pages_message_id: DataTypes.TEXT,
-    // Team
-    guild_id: DataTypes.TEXT
+  Pages.init({
+    discord_thread_id: DataTypes.TEXT,
+    discord_message_id: DataTypes.TEXT,
+    page_number: DataTypes.INTEGER,
+    team_scav_hunt_id: DataTypes.INTEGER
   }, {
     sequelize,
-    modelName: 'ItemChannel',
+    modelName: 'pages',
+    timestamps: false
   });
-  return ItemChannel;
+  return Pages;
 };
