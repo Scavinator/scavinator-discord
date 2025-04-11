@@ -12,11 +12,10 @@ export default (sequelize, DataTypes) => {
     }
   }
   Item.init({
-    // Item
     number: DataTypes.INTEGER,
     page_number: DataTypes.INTEGER,
     discord_thread_id: DataTypes.TEXT,
-    team_scav_hunt_id: DataTypes.INTEGER // TeamScavHunt id
+    team_scav_hunt_id: DataTypes.INTEGER
   }, {
     sequelize,
     modelName: 'items',
