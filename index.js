@@ -170,18 +170,12 @@ client.on(Events.InteractionCreate, async interaction => {
           if (!thread) {
             thread = await pages_channel.threads.create({ name: `Page ${page_number}` })
           }
-          await Promise.all([
-            (async () => {
-              const message = await thread.send({embeds: [await page_items_embed(team_scav_hunt, page_number)]});
-              await Pages.create({discord_thread_id: thread.id, discord_message_id: message.id, page_number, team_scav_hunt_id: team_scav_hunt.id});
-              await message.pin();
-              await thread.members.add(interaction.user);
-            })(),
-            (async () => {
-              const pages_message = await pages_channel.messages.fetch(team_scav_hunt.discord_pages_message_id);
-              await pages_message.edit({embeds: [await pages_embed(team_scav_hunt)]})
-            })()
-          ]);
+          const message = await thread.send({embeds: [await page_items_embed(team_scav_hunt, page_number)]});
+          await Pages.create({discord_thread_id: thread.id, discord_message_id: message.id, page_number, team_scav_hunt_id: team_scav_hunt.id});
+          await message.pin();
+          await thread.members.add(interaction.user);
+          const pages_message = await pages_channel.messages.fetch(team_scav_hunt.discord_pages_message_id, {cache: true});
+          await pages_message.edit({embeds: [await pages_embed(team_scav_hunt)]})
         } else {
           const thread = await pages_channel.threads.fetch(page_thread.discord_thread_id);
           await thread.members.add(interaction.user);
