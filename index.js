@@ -95,6 +95,25 @@ async function pages_embed(team_scav_hunt = null) {
   }))).join("\n"))
 }
 
+client.on(Events.ThreadDelete, async thread => {
+  const team_scav_hunt = await TeamScavHunts.findOne({where: {discord_guild_id: thread.guild.id}})
+  if (thread.parent.id === team_scav_hunt.discord_items_channel_id) {
+    const item = await Items.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id}})
+    if (item) {
+      await item.destroy();
+      const items_message = await thread.parent.messages.fetch(team_scav_hunt.discord_items_message_id, {cache: true});
+      await items_message.edit({embeds: [await items_embed(team_scav_hunt)]})
+    }
+    const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number}});
+    const pages_channel = await thread.guild.channels.fetch(team_scav_hunt.discord_pages_channel_id);
+    const page_thread = await pages_channel.threads.fetch(page.discord_thread_id);
+    if (page_thread) {
+      const page_message = await page_thread.messages.fetch(page.discord_message_id);
+      await page_message.edit({embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
+    }
+  }
+})
+
 client.on(Events.MessageCreate, async message => {
   if (message.author.id === clientId && message.type === MessageType.ThreadCreated) {
     await message.delete()
@@ -124,19 +143,20 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     const message = await interaction.channel.messages.fetch(team_scav_hunt.discord_items_message_id);
     if (interaction.commandName === "item") {
+      await interaction.deferReply();
       const page_number = interaction.options.getNumber('page');
       const item_number = interaction.options.getNumber('number');
       const name_suffix = interaction.options.getString('summary');
       const old_item = await Items.findOne({where: { number: item_number, team_scav_hunt_id: team_scav_hunt.id}});
       if (old_item) {
         const old_thread = await interaction.channel.threads.fetch(old_item.discord_thread_id);
-        return await interaction.reply({flags: MessageFlags.Ephemeral, content: `An item channel already exists for item ${item_number}: ${old_thread}`})
+        return await interaction.editReply({flags: MessageFlags.Ephemeral, content: `An item channel already exists for item ${item_number}: ${old_thread}`})
       }
       const thread = await interaction.channel.threads.create({ name: name_suffix ? `Item ${item_number}: ${name_suffix}` : `Item ${item_number}` });
       await thread.members.add(interaction.user);
       await Items.create({ number: item_number, page_number, team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id });
       await message.edit({embeds: [await items_embed(team_scav_hunt)]})
-      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Successfuly set up item thread! ${thread}`})
+      await interaction.editReply({flags: MessageFlags.Ephemeral, content: `Successfuly set up item thread! ${thread}`})
       if (team_scav_hunt.discord_pages_channel_id) {
         const pages_channel = await interaction.guild.channels.fetch(team_scav_hunt.discord_pages_channel_id);
         let page_thread = await Pages.findOne({where: {page_number, team_scav_hunt_id: team_scav_hunt.id}});
@@ -160,7 +180,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
     } else if (interaction.commandName === "refresh") {
-      const items = await Items.findAll({team_scav_hunt_id: team_scav_hunt.id});
+      const items = await Items.findAll({where: {team_scav_hunt_id: team_scav_hunt.id}});
       const threads = (await interaction.channel.threads.fetchActive()).threads;
       const archived_threads = (await interaction.channel.threads.fetchArchived()).threads;
       let removed_count = 0;
