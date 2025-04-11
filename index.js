@@ -102,14 +102,12 @@ client.on(Events.ThreadDelete, async thread => {
     const item = await Items.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id}})
     if (item) {
       await item.destroy();
-      const items_message = await thread.parent.messages.fetch(team_scav_hunt.discord_items_message_id, {cache: true});
-      await items_message.edit({embeds: [await items_embed(team_scav_hunt)]})
+      await thread.parent.messages.edit(team_scav_hunt.discord_items_message_id, {embeds: [await items_embed(team_scav_hunt)]});
       const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number}});
       const pages_channel = await thread.guild.channels.fetch(team_scav_hunt.discord_pages_channel_id);
       const page_thread = await pages_channel.threads.fetch(page.discord_thread_id);
       if (page_thread) {
-        const page_message = await page_thread.messages.fetch(page.discord_message_id);
-        await page_message.edit({embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
+        await page_thread.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
       }
     }
   }
@@ -142,7 +140,6 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!team_scav_hunt) {
       return await interaction.reply({flags: MessageFlags.Ephemeral, content: "You are not currently in a channel that has been set up for item tracking"});
     }
-    const message = await interaction.channel.messages.fetch(team_scav_hunt.discord_items_message_id);
     if (interaction.commandName === "item") {
       const page_number = interaction.options.getNumber('page');
       const item_number = interaction.options.getNumber('number');
@@ -157,7 +154,7 @@ client.on(Events.InteractionCreate, async interaction => {
         thread.members.add(interaction.user),
         Items.create({ number: item_number, page_number, team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id })
       ])
-      await message.edit({embeds: [await items_embed(team_scav_hunt)]})
+      await interaction.channel.messages.edit(team_scav_hunt.discord_items_message_id, {embeds: [await items_embed(team_scav_hunt)]});
       await interaction.reply({flags: MessageFlags.Ephemeral, content: `Successfuly set up item thread! ${thread}`})
       if (team_scav_hunt.discord_pages_channel_id) {
         let [pages_channel, page_thread] = await Promise.all([
@@ -174,13 +171,11 @@ client.on(Events.InteractionCreate, async interaction => {
           await Pages.create({discord_thread_id: thread.id, discord_message_id: message.id, page_number, team_scav_hunt_id: team_scav_hunt.id});
           await message.pin();
           await thread.members.add(interaction.user);
-          const pages_message = await pages_channel.messages.fetch(team_scav_hunt.discord_pages_message_id, {cache: true});
-          await pages_message.edit({embeds: [await pages_embed(team_scav_hunt)]})
+          await pages_channel.messages.edit(team_scav_hunt.discord_pages_message_id, {embeds: [await pages_embed(team_scav_hunt)]});
         } else {
           const thread = await pages_channel.threads.fetch(page_thread.discord_thread_id);
           await thread.members.add(interaction.user);
-          const message = await thread.messages.fetch(page_thread.discord_message_id);
-          await message.edit({embeds: [await page_items_embed(team_scav_hunt, page_number)]})
+          await thread.messages.edit(page_thread.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page_number)]});
         }
       }
     } else if (interaction.commandName === "refresh") {
@@ -194,7 +189,7 @@ client.on(Events.InteractionCreate, async interaction => {
           await item.destroy();
         }
       }
-      await message.edit({embeds: [await items_embed(team_scav_hunt)]});
+      await interaction.channel.messages.edit(team_scav_hunt.discord_items_message_id, {embeds: [await items_embed(team_scav_hunt)]});
       await interaction.reply({flags: MessageFlags.Ephemeral, content: `Removed ${removed_count} deleted item channels`});
     }
   }
