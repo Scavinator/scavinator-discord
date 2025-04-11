@@ -76,9 +76,11 @@ async function items_embed(team_scav_hunt = null) {
 }
 
 async function page_items_embed(team_scav_hunt, page_number) {
+  const base_embed = new EmbedBuilder().setTitle("Items");
   const items = await Items.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, page_number}, order: [['number', 'ASC']]})
+  if (items.length === 0) return base_embed;
   const threads = client.guilds.cache.get(team_scav_hunt.discord_guild_id).channels.cache.get(team_scav_hunt.discord_items_channel_id).threads;
-  return new EmbedBuilder().setTitle("Items").setDescription((await Promise.all(items.map(async item => {
+  return base_embed.setDescription((await Promise.all(items.map(async item => {
     const thread = await threads.fetch(item.discord_thread_id, {cache: true}); 
     return `- Item ${item.number}: ${thread}`
   }))).join("\n"))
@@ -110,6 +112,10 @@ client.on(Events.ThreadDelete, async thread => {
         await page_thread.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
       }
     }
+  } else if (thread.parent.id === team_scav_hunt.discord_pages_channel_id) {
+    const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id}});
+    await page.destroy();
+    await thread.parent.messages.edit(team_scav_hunt.discord_pages_message_id, {embeds: [await pages_embed(team_scav_hunt)]});
   }
 })
 
