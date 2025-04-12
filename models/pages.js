@@ -1,4 +1,4 @@
-import { Model } from 'sequelize';
+import { Model } from '@sequelize/core';
 
 export default (sequelize, DataTypes) => {
   class Pages extends Model {
@@ -19,7 +19,7 @@ export default (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'pages',
-    timestamps: false
+    underscored: true
   });
   return Pages;
 };

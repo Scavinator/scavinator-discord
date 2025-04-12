@@ -1,4 +1,4 @@
-import { Model } from 'sequelize';
+import { Model } from '@sequelize/core';
 
 export default (sequelize, DataTypes) => {
   class Item extends Model {
@@ -12,14 +12,15 @@ export default (sequelize, DataTypes) => {
     }
   }
   Item.init({
+    // Item
     number: DataTypes.INTEGER,
     page_number: DataTypes.INTEGER,
     discord_thread_id: DataTypes.TEXT,
-    team_scav_hunt_id: DataTypes.INTEGER
+    team_scav_hunt_id: DataTypes.INTEGER // TeamScavHunt id
   }, {
     sequelize,
     modelName: 'items',
-    timestamps: false
+    underscored: true
   });
   return Item;
 };

@@ -1,4 +1,4 @@
-import { Model } from 'sequelize';
+import { Model } from '@sequelize/core';
 
 export default (sequelize, DataTypes) => {
   class TeamScavHunts extends Model {
