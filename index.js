@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel } from 'discord.js';
+import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { REST, Routes } from 'discord.js';
 import { SlashCommandBuilder, SlashCommandChannelOption, SlashCommandNumberOption, SlashCommandStringOption } from 'discord.js';
 import { Sequelize, DataTypes, Op } from '@sequelize/core';
@@ -57,7 +57,7 @@ const ITEMS_CHANNEL_INSTRUCTIONS_EMBED = new EmbedBuilder()
   .setTitle("How to use this channel")
   .setDescription([
     '- **This channel is not for sending messages**',
-    '- **Creating an item:** Click this </item:1360014274147127538> and fill out all the options. Once complete, a thread will be created for your item.',
+    '- **Creating an item:** Click the "+ Create Item Thread" button at the bottom of this message. A form will pop up for you to fill out. Once you\'ve filled it out, a thread will be created.',
     '- **Joining an item channel:**',
     '  - Option 1 (easy): Send a message in the item channel',
     '  - Option 2 (hard): Open the channel by clicking on it, then right click (long press on mobile) on the channel name in the sidebar. This will open a menu with an option to "Join Thread"',
@@ -129,16 +129,25 @@ async function update_pages_message(team_scav_hunt = null, pages_channel = null)
   }
 }
 
+const ITEM_CREATE_CUSTOM_ID = 'createItem';
+
 async function update_items_message(team_scav_hunt = null, items_channel = null) {
   if (!items_channel) {
     items_channel = await client.guilds.cache.get(team_scav_hunt.discord_guild_id).channels.fetch(team_scav_hunt.discord_items_channel_id, {cache: true});
   }
   if (team_scav_hunt.discord_items_message_id) {
+    const items_message_buttons = new ActionRowBuilder()
+      .addComponents(new ButtonBuilder()
+        .setCustomId(ITEM_CREATE_CUSTOM_ID)
+        .setLabel('+ Create Item Thread')
+        .setStyle(ButtonStyle.Primary)
+      )
+    const items_message = {embeds: [ITEMS_CHANNEL_INSTRUCTIONS_EMBED, await items_embed(team_scav_hunt)], components: [items_message_buttons]};
     try {
-      await items_channel.messages.edit(team_scav_hunt.discord_items_message_id, {embeds: [ITEMS_CHANNEL_INSTRUCTIONS_EMBED, await items_embed(team_scav_hunt)]})
+      await items_channel.messages.edit(team_scav_hunt.discord_items_message_id, items_message)
     } catch (error) {
       if (error.code === RESTJSONErrorCodes.UnknownMessage) {
-        const items_msg = await items_channel.send({embeds: [ITEMS_CHANNEL_INSTRUCTIONS_EMBED, await items_embed(team_scav_hunt)]});
+        const items_msg = await items_channel.send(items_message);
         await team_scav_hunt.update({discord_items_message_id: items_msg.id})
       } else {
         throw error;
@@ -192,86 +201,130 @@ client.on(Events.MessageCreate, async message => {
   }
 })
 
+async function handle_create_item(interaction, team_scav_hunt, item_number, page_number, name_suffix) {
+  let errors = [];
+  if (!Number.isInteger(page_number) || page_number <= 0) {
+    errors.push(`\`${page_number}\` is not a valid page number`)
+  }
+  if (!Number.isInteger(item_number) || item_number <= 0) {
+    errors.push(`\`${item_number}\` is not a valid item number`)
+  }
+  if (name_suffix.length > 90) {
+    errors.push(`Your summary must be less than 90 characters`)
+  }
+  if (errors.length !== 0) {
+    console.log(`${interaction.user?.displayName} was blocked from creating item ${item_number} on page ${page_number} (${name_suffix})`)
+    return await interaction.reply({flags: MessageFlags.Ephemeral, content: errors.join(". ")})
+  }
+  const old_item = await Items.findOne({where: { number: item_number, team_scav_hunt_id: team_scav_hunt.id}});
+  if (old_item && old_item.discord_thread_id) {
+    console.log(`${interaction.user?.displayName} was redirected to an existing item channel for item ${item_number}`)
+    const old_thread = await interaction.channel.threads.fetch(old_item.discord_thread_id);
+    return await interaction.reply({flags: MessageFlags.Ephemeral, content: `An item channel already exists for item ${item_number}: ${old_thread}`})
+  }
+  console.log(`${interaction.user?.displayName} is creating item ${item_number} on page ${page_number} (${name_suffix})`)
+  const thread = await interaction.channel.threads.create({ name: name_suffix ? `Item ${item_number}: ${name_suffix}` : `Item ${item_number}` });
+  await Promise.all([
+    thread.members.add(interaction.user),
+    (async () => {
+      if (old_item) {
+        await old_item.update({page_number, discord_thread_id: thread.id})
+      } else {
+        await Items.create({ number: item_number, page_number, team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id });
+      }
+    })()
+  ])
+  await update_items_message(team_scav_hunt, thread.parent);
+  await interaction.reply({flags: MessageFlags.Ephemeral, content: `Successfuly set up item thread! ${thread}`})
+  if (team_scav_hunt.discord_pages_channel_id) {
+    let [pages_channel, page_thread] = await Promise.all([
+      interaction.guild.channels.fetch(team_scav_hunt.discord_pages_channel_id),
+      Pages.findOne({where: {page_number, team_scav_hunt_id: team_scav_hunt.id}})
+    ])
+    if (!page_thread || !page_thread.discord_thread_id) {
+      const { threads } = await pages_channel.threads.fetchActive();
+      let thread = threads.find(thread => thread.name.toLowerCase().match(new RegExp(`.*page.${page_number}.*`)));
+      if (!thread) {
+        thread = await pages_channel.threads.create({ name: `Page ${page_number}` })
+      }
+      const message = await thread.send({embeds: [await page_items_embed(team_scav_hunt, page_number)]});
+      if (page_thread) {
+        await page_thread.update({discord_thread_id: thread.id, discord_message_id: message.id});
+      } else {
+        await Pages.create({discord_thread_id: thread.id, discord_message_id: message.id, page_number, team_scav_hunt_id: team_scav_hunt.id});
+      }
+      await message.pin();
+      await thread.members.add(interaction.user);
+      await update_pages_message(team_scav_hunt);
+    } else {
+      try {
+        const thread = await pages_channel.threads.fetch(page_thread.discord_thread_id);
+        await thread.members.add(interaction.user);
+        await thread.messages.edit(page_thread.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page_number)]});
+      } catch (error) {
+        if (error.code === RESTJSONErrorCodes.UnknownChannel) {
+          await page_thread.update({discord_thread_id: null, discord_message_id: null})
+          await update_pages_message(team_scav_hunt, pages_channel);
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+}
+
 client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand()) return;
   const parent_channel_id = interaction.channel instanceof ThreadChannel ? interaction.channel.parentId : interaction.channelId;
   const team_scav_hunt = await TeamScavHunts.findOne({where: {[Op.or]: {discord_items_channel_id: parent_channel_id, discord_pages_channel_id: parent_channel_id}, discord_guild_id: interaction.guildId}});
   if (!team_scav_hunt) {
     return await interaction.reply({flags: MessageFlags.Ephemeral, content: "You are not currently in a channel that has been set up for item tracking"});
   }
+  if (interaction.isButton()) {
+    if (interaction.customId === ITEM_CREATE_CUSTOM_ID) {
+      return await interaction.showModal(new ModalBuilder()
+        .setCustomId('createItemModal')
+        .setTitle('Create Item Thread')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('itemNumber')
+              .setLabel('Item Number')
+              .setRequired(true)
+              .setStyle(TextInputStyle.Short)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('pageNumber')
+              .setLabel('Page Number')
+              .setRequired(true)
+              .setStyle(TextInputStyle.Short)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('nameSuffix')
+              .setLabel('Optional Summary (for thread name)')
+              .setMaxLength(80)
+              .setRequired(false)
+              .setStyle(TextInputStyle.Paragraph)
+          )
+        )
+      )
+    }
+  }
+  if (interaction.isModalSubmit()) {
+    if (interaction.customId === 'createItemModal') {
+      const item_number = Number(interaction.fields.getTextInputValue('itemNumber'));
+      const page_number = Number(interaction.fields.getTextInputValue('pageNumber'));
+      const name_suffix = interaction.fields.getTextInputValue('nameSuffix');
+      return await handle_create_item(interaction, team_scav_hunt, item_number, page_number, name_suffix);
+    }
+  }
+  if (!interaction.isChatInputCommand()) return;
   if (interaction.commandName === "item" && interaction.channelId === team_scav_hunt.discord_items_channel_id) {
     const page_number = interaction.options.getNumber('page');
     const item_number = interaction.options.getNumber('number');
     const name_suffix = interaction.options.getString('summary');
-    let errors = [];
-    if (!Number.isInteger(page_number) || page_number <= 0) {
-      errors.push(`\`${page_number}\` is not a valid page number`)
-    }
-    if (!Number.isInteger(item_number) || item_number <= 0) {
-      errors.push(`\`${item_number}\` is not a valid item number`)
-    }
-    if (name_suffix.length > 90) {
-      errors.push(`Your summary must be less than 90 characters`)
-    }
-    if (errors.length !== 0) {
-      console.log(`${interaction.user?.displayName} was blocked from creating item ${item_number} on page ${page_number} (${name_suffix})`)
-      return await interaction.reply({flags: MessageFlags.Ephemeral, content: errors.join(". ")})
-    }
-    const old_item = await Items.findOne({where: { number: item_number, team_scav_hunt_id: team_scav_hunt.id}});
-    if (old_item && old_item.discord_thread_id) {
-      console.log(`${interaction.user?.displayName} was redirected to an existed item channel for item ${item_number}`)
-      const old_thread = await interaction.channel.threads.fetch(old_item.discord_thread_id);
-      return await interaction.reply({flags: MessageFlags.Ephemeral, content: `An item channel already exists for item ${item_number}: ${old_thread}`})
-    }
-    console.log(`${interaction.user?.displayName} is creating item ${item_number} on page ${page_number} (${name_suffix})`)
-    const thread = await interaction.channel.threads.create({ name: name_suffix ? `Item ${item_number}: ${name_suffix}` : `Item ${item_number}` });
-    await Promise.all([
-      thread.members.add(interaction.user),
-      (async () => {
-        if (old_item) {
-          await old_item.update({page_number, discord_thread_id: thread.id})
-        } else {
-          await Items.create({ number: item_number, page_number, team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id });
-        }
-      })()
-    ])
-    await update_items_message(team_scav_hunt, thread.parent);
-    await interaction.reply({flags: MessageFlags.Ephemeral, content: `Successfuly set up item thread! ${thread}`})
-    if (team_scav_hunt.discord_pages_channel_id) {
-      let [pages_channel, page_thread] = await Promise.all([
-        interaction.guild.channels.fetch(team_scav_hunt.discord_pages_channel_id),
-        Pages.findOne({where: {page_number, team_scav_hunt_id: team_scav_hunt.id}})
-      ])
-      if (!page_thread || !page_thread.discord_thread_id) {
-        const { threads } = await pages_channel.threads.fetchActive();
-        let thread = threads.find(thread => thread.name.toLowerCase().match(new RegExp(`.*page.${page_number}.*`)));
-        if (!thread) {
-          thread = await pages_channel.threads.create({ name: `Page ${page_number}` })
-        }
-        const message = await thread.send({embeds: [await page_items_embed(team_scav_hunt, page_number)]});
-        if (page_thread) {
-          await page_thread.update({discord_thread_id: thread.id, discord_message_id: message.id});
-        } else {
-          await Pages.create({discord_thread_id: thread.id, discord_message_id: message.id, page_number, team_scav_hunt_id: team_scav_hunt.id});
-        }
-        await message.pin();
-        await thread.members.add(interaction.user);
-        await update_pages_message(team_scav_hunt);
-      } else {
-        try {
-          const thread = await pages_channel.threads.fetch(page_thread.discord_thread_id);
-          await thread.members.add(interaction.user);
-          await thread.messages.edit(page_thread.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page_number)]});
-        } catch (error) {
-          if (error.code === RESTJSONErrorCodes.UnknownChannel) {
-            await page_thread.update({discord_thread_id: null, discord_message_id: null})
-            await update_pages_message(team_scav_hunt, pages_channel);
-          } else {
-            throw error;
-          }
-        }
-      }
-    }
+    return await handle_create_item(interaction, team_scav_hunt, item_number, page_number, name_suffix);
   } else if (interaction.commandName === "refresh") {
     if (interaction.channelId === team_scav_hunt.discord_items_channel_id) {
       console.log(`Refresh on the items channel initiated by ${interaction.user?.displayName}`)
