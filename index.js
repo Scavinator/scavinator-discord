@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags, RESTJSONErrorCodes } from 'discord.js';
+import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel } from 'discord.js';
 import { REST, Routes } from 'discord.js';
 import { SlashCommandBuilder, SlashCommandChannelOption, SlashCommandNumberOption, SlashCommandStringOption } from 'discord.js';
 import { Sequelize, DataTypes, Op } from '@sequelize/core';
@@ -161,7 +161,8 @@ client.on(Events.MessageCreate, async message => {
 
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  const team_scav_hunt = await TeamScavHunts.findOne({where: {[Op.or]: {discord_items_channel_id: interaction.channel.id, discord_pages_channel_id: interaction.channel.id}, discord_guild_id: interaction.guildId}});
+  const parent_channel_id = interaction.channel instanceof ThreadChannel ? interaction.channel.parentId : interaction.channelId;
+  const team_scav_hunt = await TeamScavHunts.findOne({where: {[Op.or]: {discord_items_channel_id: parent_channel_id, discord_pages_channel_id: parent_channel_id}, discord_guild_id: interaction.guildId}});
   if (!team_scav_hunt) {
     return await interaction.reply({flags: MessageFlags.Ephemeral, content: "You are not currently in a channel that has been set up for item tracking"});
   }
@@ -251,7 +252,28 @@ client.on(Events.InteractionCreate, async interaction => {
         await update_pages_message(team_scav_hunt);
         await interaction.reply({flags: MessageFlags.Ephemeral, content: `Removed ${removed_count} deleted page channels`});
       }
+    } else if (interaction.channel instanceof ThreadChannel) {
+      const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: interaction.channel.id}});
+      if (page) {
+        let page_items_message;
+        try {
+          page_items_message = await interaction.channel.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
+        } catch (error) {
+          if (error.code === RESTJSONErrorCodes.UnknownMessage) {
+            page_items_message = await interaction.channel.messages.send({embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
+            await page.update({discord_message_id: page_items_message.id})
+          } else {
+            throw error;
+          }
+        }
+        await interaction.reply({flags: MessageFlags.Ephemeral, content: `Refreshed message ${page_items_message.url}`})
+      } else {
+        await interaction.reply({flags: MessageFlags.Ephemeral, content: `No known messages in ${interaction.channel} to refresh`})
+      }
+    } else {
+      await interaction.reply({flags: MessageFlags.Ephemeral, content: `No known messages in ${interaction.channel} to refresh`})
     }
+
   } else {
     await interaction.reply({flags: MessageFlags.Ephemeral, content: `Not configured to handle \`/${interaction.commandName}\` in ${interaction.channel}`})
   }
