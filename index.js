@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags } from 'discord.js';
+import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags, RESTJSONErrorCodes } from 'discord.js';
 import { REST, Routes } from 'discord.js';
 import { SlashCommandBuilder, SlashCommandChannelOption, SlashCommandNumberOption, SlashCommandStringOption } from 'discord.js';
 import { Sequelize, DataTypes, Op } from '@sequelize/core';
@@ -10,8 +10,9 @@ const sequelize = new Sequelize({
   dialect: PostgresDialect,
   database: 'scavinator_rb',
   user: 'scavinator_rb_discord',
-  password: 'scavinator_rb_discord'
-});;
+  password: 'scavinator_rb_discord',
+  logging: console.log
+});
 import items_loader from './models/items.js';
 import team_scav_hunts_loader from './models/teamscavhunts.js';
 import pages_loader from './models/pages.js';
@@ -59,10 +60,18 @@ async function items_embed(team_scav_hunt) {
   const items = await Items.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}, order: [['number', 'ASC']]})
   if (items.length === 0) return base_embed
   const threads = client.guilds.cache.get(team_scav_hunt.discord_guild_id).channels.cache.get(team_scav_hunt.discord_items_channel_id).threads;
-  return base_embed.setDescription((await Promise.all(items.map(async item => {
-    const thread = await threads.fetch(item.discord_thread_id, {cache: true}); 
-    return `- Item ${item.number}: ${thread}`
-  }))).join("\n"))
+  const active_threads = (await threads.fetchActive()).threads;
+  const archived_threads = (await threads.fetchArchived()).threads;
+  const item_list = [];
+  for (const item of items) {
+    const thread = active_threads.find(i => item.discord_thread_id === i.id) || archived_threads.find(i => item.discord_thread_id === i.id);
+    if (!thread) {
+      await item.update({discord_thread_id: null});
+    } else {
+      item_list.push([item, thread])
+    }
+  }
+  return base_embed.setDescription(item_list.map(([item, thread]) => `- Item ${item.number}: ${thread}`).join("\n"))
 }
 
 async function page_items_embed(team_scav_hunt, page_number) {
@@ -122,9 +131,18 @@ client.on(Events.ThreadDelete, async thread => {
       const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number}});
       if (page && page.discord_message_id && page.discord_thread_id) {
         const pages_channel = await thread.guild.channels.fetch(team_scav_hunt.discord_pages_channel_id);
-        const page_thread = await pages_channel.threads.fetch(page.discord_thread_id);
-        if (page_thread) {
-          await page_thread.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
+        try {
+          const page_thread = await pages_channel.threads.fetch(page.discord_thread_id);
+          if (page_thread) {
+            await page_thread.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
+          }
+        } catch (error) {
+          if (error.code === RESTJSONErrorCodes.UnknownChannel) {
+            await page.update({discord_thread_id: null, discord_message_id: null})
+            await update_pages_message(team_scav_hunt, pages_channel);
+          } else {
+            throw error;
+          }
         }
       }
     }
@@ -145,11 +163,11 @@ client.on(Events.MessageCreate, async message => {
 
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  const team_scav_hunt = await TeamScavHunts.findOne({where: {discord_items_channel_id: interaction.channel.id, discord_guild_id: interaction.guildId}});
+  const team_scav_hunt = await TeamScavHunts.findOne({where: {[Op.or]: {discord_items_channel_id: interaction.channel.id, discord_pages_channel_id: interaction.channel.id}, discord_guild_id: interaction.guildId}});
   if (!team_scav_hunt) {
     return await interaction.reply({flags: MessageFlags.Ephemeral, content: "You are not currently in a channel that has been set up for item tracking"});
   }
-  if (interaction.commandName === "item") {
+  if (interaction.commandName === "item" && interaction.channelId === team_scav_hunt.discord_items_channel_id) {
     const page_number = interaction.options.getNumber('page');
     const item_number = interaction.options.getNumber('number');
     const name_suffix = interaction.options.getString('summary');
@@ -192,31 +210,52 @@ client.on(Events.InteractionCreate, async interaction => {
         await thread.members.add(interaction.user);
         await update_pages_message(team_scav_hunt);
       } else {
-        const thread = await pages_channel.threads.fetch(page_thread.discord_thread_id);
-        await thread.members.add(interaction.user);
-        await thread.messages.edit(page_thread.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page_number)]});
+        try {
+          const thread = await pages_channel.threads.fetch(page_thread.discord_thread_id);
+          await thread.members.add(interaction.user);
+          await thread.messages.edit(page_thread.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page_number)]});
+        } catch (error) {
+          if (error.code === RESTJSONErrorCodes.UnknownChannel) {
+            await page_thread.update({discord_thread_id: null, discord_message_id: null})
+            await update_pages_message(team_scav_hunt, pages_channel);
+          } else {
+            throw error;
+          }
+        }
       }
     }
   } else if (interaction.commandName === "refresh") {
-    const items = await Items.findAll({where: {team_scav_hunt_id: team_scav_hunt.id}});
-    const threads = (await interaction.channel.threads.fetchActive()).threads;
-    const archived_threads = (await interaction.channel.threads.fetchArchived()).threads;
-    let removed_count = 0;
-    for (const item of items) {
-      if (!threads.some(t => t.id === item.discord_thread_id) && !archived_threads.some(t => t.id === item.discord_thread_id)) {
-        removed_count += 1;
-        await item.update({discord_thread_id: null});
+    if (interaction.channelId === team_scav_hunt.discord_items_channel_id) {
+      const items = await Items.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}});
+      const threads = (await interaction.channel.threads.fetchActive()).threads;
+      const archived_threads = (await interaction.channel.threads.fetchArchived()).threads;
+      let removed_count = 0;
+      for (const item of items) {
+        if (!threads.some(t => t.id === item.discord_thread_id) && !archived_threads.some(t => t.id === item.discord_thread_id)) {
+          removed_count += 1;
+          await item.update({discord_thread_id: null});
+        }
+      }
+      await update_items_message(team_scav_hunt, interaction.channel),
+      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Removed ${removed_count} deleted item channels`});
+    } else if (interaction.channelId === team_scav_hunt.discord_pages_channel_id) {
+      if (team_scav_hunt.discord_pages_channel_id) {
+        const pages = await Pages.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}});
+        const threads = (await interaction.channel.threads.fetchActive()).threads;
+        const archived_threads = (await interaction.channel.threads.fetchArchived()).threads;
+        let removed_count = 0;
+        for (const page of pages) {
+          if (!threads.some(t => t.id === page.discord_thread_id) && !archived_threads.some(t => t.id === page.discord_thread_id)) {
+            removed_count += 1;
+            await page.update({discord_thread_id: null});
+          }
+        }
+        await update_pages_message(team_scav_hunt);
+        await interaction.reply({flags: MessageFlags.Ephemeral, content: `Removed ${removed_count} deleted page channels`});
       }
     }
-    await Promise.all([
-      update_items_message(team_scav_hunt, interaction.channel),
-      (async () => {
-        if (team_scav_hunt.discord_pages_channel_id) {
-          await update_pages_message(team_scav_hunt);
-        }
-      })()
-    ])
-    await interaction.reply({flags: MessageFlags.Ephemeral, content: `Removed ${removed_count} deleted item channels`});
+  } else {
+    await interaction.reply({flags: MessageFlags.Ephemeral, content: `Not configured to handle \`/${interaction.commandName}\` in ${interaction.channel}`})
   }
 });
 
