@@ -8,10 +8,8 @@ import config from './config.json' with { type: "json" };
 const { token, clientId } = config;
 const sequelize = new Sequelize({
   dialect: PostgresDialect,
-  database: 'scavinator_rb',
-  user: 'scavinator_rb_discord',
-  password: 'scavinator_rb_discord',
-  logging: console.log
+  logging: console.log,
+  ...config.database
 });
 import items_loader from './models/items.js';
 import team_scav_hunts_loader from './models/teamscavhunts.js';
