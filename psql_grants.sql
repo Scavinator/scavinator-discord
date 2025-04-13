@@ -8,3 +8,4 @@ GRANT INSERT ON TABLE pages TO scavinator_rb_discord;
 GRANT SELECT ON TABLE pages TO scavinator_rb_discord;
 GRANT UPDATE (discord_thread_id, discord_message_id, updated_at) ON TABLE pages TO scavinator_rb_discord;
 GRANT USAGE ON SEQUENCE items_id_seq, pages_id_seq TO scavinator_rb_discord;
+GRANT SELECT ON TABLE list_categories TO scavinator_rb_discord;

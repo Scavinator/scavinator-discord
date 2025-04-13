@@ -16,7 +16,8 @@ export default (sequelize, DataTypes) => {
     discord_pages_channel_id: DataTypes.TEXT,
     discord_items_message_id: DataTypes.TEXT,
     discord_pages_message_id: DataTypes.TEXT,
-    discord_guild_id: DataTypes.TEXT
+    discord_guild_id: DataTypes.TEXT,
+    team_id: DataTypes.INTEGER,
   }, {
     sequelize,
     modelName: 'team_scav_hunts',
