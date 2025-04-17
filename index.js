@@ -72,6 +72,7 @@ const ITEMS_CHANNEL_INSTRUCTIONS_EMBED = new EmbedBuilder()
     '  - Option 2 (hard): Open the channel by clicking on it, then right click (long press on mobile) on the channel name in the sidebar. This will open a menu with an option to "Join Thread"',
     '- This channel will house one thread for each item and will act as an "index" of those item channels.',
     "- _You will probably want to mute this channel unless you'd like ghost notifications every time an item is created_",
+    '- If you want to play with the bot, use [the testing server](<https://discord.gg/ryqAwWhdYc>).',
     '- Happy scavving!'
   ].join("\n"));
 
@@ -406,7 +407,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
       await update_items_message(team_scav_hunt, interaction.channel),
-      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Removed ${removed_count} deleted item channels`});
+      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Unlinked ${removed_count} deleted item channels`});
     } else if (interaction.channelId === team_scav_hunt.discord_pages_channel_id) {
       console.log(`Refresh on the pages channel initiated by ${interaction.user?.displayName}`)
       const pages = await Pages.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}});
@@ -420,7 +421,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
       }
       await update_pages_message(team_scav_hunt);
-      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Removed ${removed_count} deleted page channels`});
+      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Unlinked ${removed_count} deleted page channels`});
     } else if (interaction.channel instanceof ThreadChannel) {
       const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: interaction.channel.id}});
       if (page) {
