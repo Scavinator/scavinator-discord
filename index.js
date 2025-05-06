@@ -119,6 +119,17 @@ async function page_items_embed(team_scav_hunt, page_number) {
   }))).join("\n"))
 }
 
+function item_embed(team_scav_hunt, item) {
+  return new EmbedBuilder()
+    .setTitle("Summary")
+    .setFields(
+      {name: "Page", value: `${item.page_number?.toString()} (<@1061478664853794858>)` ?? "N/A", inline: true},
+      // {name: "Cons", value: "ConCon (<#1368387183223767050>)\nAestheticon (<#1368387211141320774>)", inline: true},
+      // {name: "Status", value: ":package: In Box", inline: true},
+      {name: "Item", value: item.content ?? "N/A", inline: false},
+    )
+}
+
 async function pages_embed(team_scav_hunt) {
   const base_embed = new EmbedBuilder().setTitle("Pages");
   const pages = await Pages.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}, order: [['page_number', 'ASC']]})
@@ -245,10 +256,10 @@ async function handle_create_item(interaction, team_scav_hunt, item_number, page
     console.log(`${interaction.user?.displayName} was blocked from creating item ${item_number} on page ${page_number} (${name_suffix})`)
     return await interaction.reply({flags: MessageFlags.Ephemeral, content: errors.join(". ")})
   }
-  const old_item = await Items.findOne({where: { number: item_number, team_scav_hunt_id: team_scav_hunt.id, list_category_id}});
-  if (old_item && old_item.discord_thread_id) {
+  let item = await Items.findOne({where: { number: item_number, team_scav_hunt_id: team_scav_hunt.id, list_category_id}});
+  if (item && item.discord_thread_id) {
     console.log(`${interaction.user?.displayName} was redirected to an existing item channel for item ${item_number}`)
-    const old_thread = await interaction.channel.threads.fetch(old_item.discord_thread_id);
+    const old_thread = await interaction.channel.threads.fetch(item.discord_thread_id);
     return await interaction.reply({flags: MessageFlags.Ephemeral, content: `An item channel already exists for item ${item_number}: ${old_thread}`})
   }
   console.log(`${interaction.user?.displayName} is creating item ${item_number} on page ${page_number} (${name_suffix})`)
@@ -258,16 +269,17 @@ async function handle_create_item(interaction, team_scav_hunt, item_number, page
     name_prefix = `${category.name} Item`
   }
   const thread = await interaction.channel.threads.create({ name: name_suffix ? `${name_prefix} ${item_number}: ${name_suffix}` : `${name_prefix} ${item_number}` });
-  await Promise.all([
-    thread.members.add(interaction.user),
-    (async () => {
-      if (old_item) {
-        await old_item.update({page_number, discord_thread_id: thread.id})
-      } else {
-        await Items.create({ number: item_number, page_number, team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id, list_category_id });
-      }
-    })()
-  ])
+  if (item) {
+    item.page_number = page_number
+    item.discord_thread_id = thread.id
+  } else {
+    item = Items.build({ number: item_number, page_number, team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id, list_category_id });
+  }
+  const item_message = await thread.send({embeds: [item_embed(team_scav_hunt, item)]})
+  item.discord_message_id = item_message.id
+  await item_message.pin()
+  thread.members.add(interaction.user)
+  await item.save()
   await update_items_message(team_scav_hunt, thread.parent);
   await interaction.reply({flags: MessageFlags.Ephemeral, content: `Successfully set up item thread! ${thread}`})
   if (page_number && team_scav_hunt.discord_pages_channel_id) {
@@ -424,6 +436,7 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.reply({flags: MessageFlags.Ephemeral, content: `Unlinked ${removed_count} deleted page channels`});
     } else if (interaction.channel instanceof ThreadChannel) {
       const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: interaction.channel.id}});
+      const item = await Items.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: interaction.channel.id}});
       if (page) {
         console.log(`Refresh on the pages item channel for page ${page.page_number} initiated by ${interaction.user?.displayName}`)
         let page_items_message;
@@ -438,6 +451,21 @@ client.on(Events.InteractionCreate, async interaction => {
           }
         }
         await interaction.reply({flags: MessageFlags.Ephemeral, content: `Refreshed message ${page_items_message.url}`})
+      } else if (item) {
+        console.log(`Refresh on the item channel for item ${item.number} initiated by ${interaction.user?.displayName}`)
+        let item_message;
+        try {
+          item_message = await interaction.channel.messages.edit(item.discord_message_id || "0", {embeds: [item_embed(team_scav_hunt, item)]});
+        } catch (error) {
+          if (error.code === RESTJSONErrorCodes.UnknownMessage) {
+            item_message = await interaction.channel.send({embeds: [item_embed(team_scav_hunt, item)]});
+            await item_message.pin()
+            await item.update({discord_message_id: item_message.id})
+          } else {
+            throw error;
+          }
+        }
+        await interaction.reply({flags: MessageFlags.Ephemeral, content: `Refreshed message ${item_message.url}`})
       } else {
         await interaction.reply({flags: MessageFlags.Ephemeral, content: `No known messages in ${interaction.channel} to refresh`})
       }

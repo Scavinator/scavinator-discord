@@ -15,7 +15,9 @@ export default (sequelize, DataTypes) => {
     // Item
     number: DataTypes.INTEGER,
     page_number: DataTypes.INTEGER,
+    content: DataTypes.TEXT,
     discord_thread_id: DataTypes.TEXT,
+    discord_message_id: DataTypes.TEXT,
     team_scav_hunt_id: DataTypes.INTEGER,
     list_category_id: DataTypes.INTEGER
   }, {
