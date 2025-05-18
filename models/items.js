@@ -1,4 +1,4 @@
-import { Model } from '@sequelize/core';
+import { Model } from 'sequelize';
 
 export default (sequelize, DataTypes) => {
   class Item extends Model {

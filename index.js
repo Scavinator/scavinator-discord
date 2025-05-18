@@ -1,13 +1,12 @@
 import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, PermissionFlagsBits } from 'discord.js';
 import { REST, Routes } from 'discord.js';
 import { SlashCommandBuilder, SlashCommandChannelOption, SlashCommandNumberOption, SlashCommandStringOption } from 'discord.js';
-import { Sequelize, DataTypes, Op } from '@sequelize/core';
-import { PostgresDialect } from '@sequelize/postgres';
+import { Sequelize, DataTypes, Op } from 'sequelize';
 
 import config from './config.json' with { type: "json" };
 const { token, clientId } = config;
 const sequelize = new Sequelize({
-  dialect: PostgresDialect,
+  dialect: 'postgres',
   logging: console.log,
   ...config.database
 });
