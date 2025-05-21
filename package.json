@@ -2,7 +2,6 @@
   "name": "scavinator-discord",
   "version": "1.0.0",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -12,7 +11,8 @@
     "discord.js": "^14.18.0",
     "pg": "^8.16.0",
     "sequelize": "^6.37.7",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "typescript": "^5.8.3"
   },
   "devDependencies": {
     "sequelize-cli": "^6.6.2"
