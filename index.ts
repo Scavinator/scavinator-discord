@@ -68,6 +68,7 @@ const ITEMS_CHANNEL_INSTRUCTIONS_EMBED = new EmbedBuilder()
   ].join("\n"));
 
 async function items_embed(team_scav_hunt: TeamScavHunts) {
+  console.log(Date.now(), "Gen items msg")
   const list_categories = Object.fromEntries((await ListCategories.findAll({where: {team_id: {[Op.or]: [null, team_scav_hunt.team_id]}}})).map(category => [category.id, category.name]));
   const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}, order: [['number', 'ASC']]})
   if (items.length === 0) return []
@@ -85,6 +86,7 @@ async function items_embed(team_scav_hunt: TeamScavHunts) {
       item_list[key].push([item, thread])
     }
   }
+  console.log(Date.now(), "Done gen items msg")
   return Object.entries(item_list).map(([category, items]) => {
     let chunked_items = []
     while (items.length > 0) chunked_items.push(items.splice(0, 100))
@@ -127,6 +129,7 @@ async function item_embed(team_scav_hunt: TeamScavHunts, item: Item) {
 }
 
 async function pages_embed(team_scav_hunt: TeamScavHunts) {
+  console.log(Date.now(), "Gen pg msg")
   const base_embed = new EmbedBuilder().setTitle("Pages");
   const pages = await Pages.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}, order: [['page_number', 'ASC']]})
   if (pages.length === 0) return base_embed
@@ -135,10 +138,12 @@ async function pages_embed(team_scav_hunt: TeamScavHunts) {
     const thread = await threads.fetch(page.discord_thread_id, {cache: true}); 
     return `- Page ${page.page_number}: ${thread}`
   })));
+  console.log(Date.now(), "Done gen pg msg")
   return base_embed.setDescription(page_str_list.join("\n"))
 }
 
 async function update_pages_message(team_scav_hunt: TeamScavHunts, pages_channel: TextChannel | null = null) {
+  console.log(Date.now(), "Upd pg msg")
   if (!pages_channel) {
     pages_channel = await client.guilds.cache.get(team_scav_hunt.discord_guild_id)!.channels.fetch(team_scav_hunt.discord_pages_channel_id, {cache: true}) as TextChannel;
   }
@@ -157,12 +162,14 @@ async function update_pages_message(team_scav_hunt: TeamScavHunts, pages_channel
     const pages_message = await pages_channel!.send({embeds: [await pages_embed(team_scav_hunt)]})
     await team_scav_hunt.update({discord_pages_message_id: pages_message.id})
   }
+  console.log(Date.now(), "Done upd pg msg")
 }
 
 const ITEM_CREATE_CUSTOM_ID = 'createItem';
 const ADVANCED_ITEM_CREATE_CUSTOM_ID = 'advancedCreateItem';
 
 async function update_items_message(team_scav_hunt: TeamScavHunts, items_channel: TextChannel | null = null) {
+  console.log(Date.now(), "Upd item msg")
   if (!items_channel) {
     items_channel = await client.guilds.cache.get(team_scav_hunt.discord_guild_id)!.channels.fetch(team_scav_hunt.discord_items_channel_id, {cache: true}) as TextChannel;
   }
@@ -193,6 +200,7 @@ async function update_items_message(team_scav_hunt: TeamScavHunts, items_channel
     const items_message = await items_channel.send(items_message_content)
     await team_scav_hunt.update({discord_items_message_id: items_message.id})
   }
+  console.log(Date.now(), "Done upd item msg")
 }
 
 client.on(Events.ThreadDelete, async thread => {
@@ -283,11 +291,14 @@ async function handle_create_item(interaction: ChatInputCommandInteraction | Mod
     await item.update({page_number, discord_thread_id: thread.id})
     yield thread
     const item_message = await thread.send({embeds: [await item_embed(team_scav_hunt, item)]})
-    item.discord_message_id = item_message.id
-    await item_message.pin()
-    thread.members.add(user)
-    await item.save()
-    await update_items_message(team_scav_hunt, channel);
+    await item.update({discord_message_id: item_message.id});
+    await Promise.all([
+      (async () => {
+        await item_message.pin()
+        thread.members.add(user)
+      })(),
+      update_items_message(team_scav_hunt, channel)
+    ])
   }
 
   async function* setup_page(team_scav_hunt: TeamScavHunts, page_number: number, user: User, guild: Guild) {
@@ -298,15 +309,19 @@ async function handle_create_item(interaction: ChatInputCommandInteraction | Mod
         return
       }
       const [page, newPage] = await Pages.findOrCreate({where: {page_number, team_scav_hunt_id: team_scav_hunt.id}});
-      if (newPage) {
+      if (newPage || page.discord_thread_id === null) {
         const page_thread = await create_page_thread(page_number, pages_channel);
         await page.update({discord_thread_id: page_thread.id});
         yield
         const message = await page_thread.send({embeds: [await page_items_embed(team_scav_hunt, page_number)]});
         await page.update({discord_message_id: message.id});
-        await message.pin();
-        await page_thread.members.add(user);
-        await update_pages_message(team_scav_hunt);
+        await Promise.all([
+          (async () => {
+            await message.pin();
+            await page_thread.members.add(user);
+          })(),
+          update_pages_message(team_scav_hunt)
+        ])
       } else {
         const page_thread = await pages_channel.threads.fetch(page.discord_thread_id);
         if (page_thread === null) {
@@ -315,8 +330,10 @@ async function handle_create_item(interaction: ChatInputCommandInteraction | Mod
           await update_pages_message(team_scav_hunt, pages_channel);
         } else {
           yield
-          await page_thread.members.add(user);
-          await page_thread.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page_number)]});
+          await Promise.all([
+            page_thread.members.add(user),
+            page_thread.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page_number)]})
+          ])
         }
       }
     }
@@ -324,15 +341,20 @@ async function handle_create_item(interaction: ChatInputCommandInteraction | Mod
 
   const item_setup_manager = setup_item(team_scav_hunt, page_number, name_suffix, item, list_category_id, item_number, interaction.user, interaction.channel);
   const page_setup_manager = setup_page(team_scav_hunt, page_number, interaction.user, interaction.guild!);
+  const reply = await interaction.reply({flags: MessageFlags.Ephemeral, content: `Setting up item...`})
+  console.log(Date.now(), "Starting stages")
   const [item_thread, _] = await Promise.all([
     item_setup_manager.next().then(i => i.value),
     page_setup_manager.next()
   ])
+  await reply.edit({content: `Successfully created item thread! ${item_thread}`})
+  console.log(Date.now(), "Stage 1 done")
   await Promise.all([
     item_setup_manager.next(),
     page_setup_manager.next()
   ])
-  await interaction.reply({flags: MessageFlags.Ephemeral, content: `Successfully set up item thread! ${item_thread}`})
+  console.log(Date.now(), "Stage 2 done")
+  await reply.edit({content: `Successfully set up item thread! ${item_thread}`})
 }
 
 async function create_page_thread(page_number: number, pages_channel: TextChannel): Promise<ThreadChannel> {
@@ -381,6 +403,7 @@ function itemModal(category: ListCategories | null = null) {
 }
 
 client.on(Events.InteractionCreate, async interaction => {
+  console.log(Date.now(), "Start")
   const parent_channel_id = interaction.channel instanceof ThreadChannel ? interaction.channel.parentId : interaction.channelId;
   const team_scav_hunt = await TeamScavHunts.findOne({where: {[Op.or]: {discord_items_channel_id: parent_channel_id, discord_pages_channel_id: parent_channel_id}, discord_guild_id: interaction.guildId}});
   if (!(interaction instanceof ChatInputCommandInteraction || interaction instanceof ModalSubmitInteraction || interaction instanceof ButtonInteraction || interaction instanceof StringSelectMenuInteraction)) {
@@ -392,7 +415,9 @@ client.on(Events.InteractionCreate, async interaction => {
   }
   if (interaction.isButton()) {
     if (interaction.customId === ITEM_CREATE_CUSTOM_ID) {
-      return await interaction.showModal(itemModal())
+      console.log(Date.now(), "Showing modal");
+      await interaction.showModal(itemModal())
+      console.log(Date.now(), "Showed modal");
     } else if (interaction.customId === ADVANCED_ITEM_CREATE_CUSTOM_ID) {
       const categories = await ListCategories.findAll({where: {team_id: {[Op.or]: [null, team_scav_hunt.team_id]}}})
       await interaction.reply({flags: MessageFlags.Ephemeral, content: "Which type of item are you creating?", components: [
@@ -409,16 +434,14 @@ client.on(Events.InteractionCreate, async interaction => {
           )
       ]})
     }
-  }
-  if (interaction.isStringSelectMenu() && interaction instanceof StringSelectMenuInteraction) {
+  } else if (interaction.isStringSelectMenu() && interaction instanceof StringSelectMenuInteraction) {
     if (interaction.customId === "listCategory") {
       const list_category = await ListCategories.findOne({where: {id: interaction.values[0], team_id: {[Op.or]: [null, team_scav_hunt.team_id]}}})
       await interaction.showModal(itemModal(list_category))
       await interaction.deleteReply();
       return;
     }
-  }
-  if (interaction.isModalSubmit()) {
+  } else if (interaction.isModalSubmit()) {
     const createItemMatch = interaction.customId.match(/^createItemModal(?:\-(\d+))?$/)
     if (createItemMatch) {
       const list_category = createItemMatch[1] === undefined ? null : Number(createItemMatch[1])
@@ -436,87 +459,87 @@ client.on(Events.InteractionCreate, async interaction => {
       const name_suffix = interaction.fields.getTextInputValue('nameSuffix');
       return await handle_create_item(interaction, team_scav_hunt, item_number, page_number, name_suffix, list_category);
     }
-  }
-  if (!interaction.isChatInputCommand()) return;
-  const channel = interaction.channel;
-  if (channel === null) {
-    console.log("Invalid interaction channel?", interaction);
-    return
-  }
-  if (interaction.commandName === "item" && channel.id === team_scav_hunt.discord_items_channel_id && channel instanceof TextChannel) {
-    const page_number = interaction.options.getNumber('page');
-    const item_number = interaction.options.getNumber('number');
-    const name_suffix = interaction.options.getString('summary');
-    return await handle_create_item(interaction, team_scav_hunt, item_number, page_number, name_suffix);
-  } else if (interaction.commandName === "refresh") {
-    if (interaction.channelId === team_scav_hunt.discord_items_channel_id && channel instanceof TextChannel) {
-      console.log(`Refresh on the items channel initiated by ${interaction.user?.displayName}`)
-      const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}});
-      const threads = (await channel.threads.fetchActive()).threads;
-      const archived_threads = (await channel.threads.fetchArchived()).threads;
-      let removed_count = 0;
-      for (const item of items) {
-        if (!threads.some(t => t.id === item.discord_thread_id) && !archived_threads.some(t => t.id === item.discord_thread_id)) {
-          removed_count += 1;
-          await item.update({discord_thread_id: null});
-        }
-      }
-      await update_items_message(team_scav_hunt, channel),
-      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Unlinked ${removed_count} deleted item channels`});
-    } else if (channel.id === team_scav_hunt.discord_pages_channel_id && channel instanceof TextChannel) {
-      console.log(`Refresh on the pages channel initiated by ${interaction.user?.displayName}`)
-      const pages = await Pages.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}});
-      const threads = (await channel.threads.fetchActive()).threads;
-      const archived_threads = (await channel.threads.fetchArchived()).threads;
-      let removed_count = 0;
-      for (const page of pages) {
-        if (!threads.some(t => t.id === page.discord_thread_id) && !archived_threads.some(t => t.id === page.discord_thread_id)) {
-          removed_count += 1;
-          await page.update({discord_thread_id: null});
-        }
-      }
-      await update_pages_message(team_scav_hunt);
-      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Unlinked ${removed_count} deleted page channels`});
-    } else if (channel instanceof ThreadChannel) {
-      const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: channel.id}});
-      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: channel.id}});
-      if (page) {
-        console.log(`Refresh on the pages item channel for page ${page.page_number} initiated by ${interaction.user?.displayName}`)
-        let page_items_message;
-        try {
-          page_items_message = await channel.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
-        } catch (error) {
-          if ((error as RESTError).code === RESTJSONErrorCodes.UnknownMessage) {
-            page_items_message = await channel.send({embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
-            await page.update({discord_message_id: page_items_message.id})
-          } else {
-            throw error;
+  } else if (interaction.isChatInputCommand()) {
+    const channel = interaction.channel;
+    if (channel === null) {
+      console.log("Invalid interaction channel?", interaction);
+      return
+    }
+    if (interaction.commandName === "item" && channel.id === team_scav_hunt.discord_items_channel_id && channel instanceof TextChannel) {
+      const page_number = interaction.options.getNumber('page');
+      const item_number = interaction.options.getNumber('number');
+      const name_suffix = interaction.options.getString('summary');
+      return await handle_create_item(interaction, team_scav_hunt, item_number, page_number, name_suffix);
+    } else if (interaction.commandName === "refresh") {
+      if (interaction.channelId === team_scav_hunt.discord_items_channel_id && channel instanceof TextChannel) {
+        console.log(`Refresh on the items channel initiated by ${interaction.user?.displayName}`)
+        const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}});
+        const threads = (await channel.threads.fetchActive()).threads;
+        const archived_threads = (await channel.threads.fetchArchived()).threads;
+        let removed_count = 0;
+        for (const item of items) {
+          if (!threads.some(t => t.id === item.discord_thread_id) && !archived_threads.some(t => t.id === item.discord_thread_id)) {
+            removed_count += 1;
+            await item.update({discord_thread_id: null});
           }
         }
-        await interaction.reply({flags: MessageFlags.Ephemeral, content: `Refreshed message ${page_items_message.url}`})
-      } else if (item) {
-        console.log(`Refresh on the item channel for item ${item.number} initiated by ${interaction.user?.displayName}`)
-        let item_message;
-        try {
-          item_message = await channel.messages.edit(item.discord_message_id || "0", {embeds: [await item_embed(team_scav_hunt, item)]});
-        } catch (error) {
-          if ((error as RESTError).code === RESTJSONErrorCodes.UnknownMessage) {
-            item_message = await channel.send({embeds: [await item_embed(team_scav_hunt, item)]});
-            await item_message.pin()
-            await item.update({discord_message_id: item_message.id})
-          } else {
-            throw error;
+        await update_items_message(team_scav_hunt, channel),
+        await interaction.reply({flags: MessageFlags.Ephemeral, content: `Unlinked ${removed_count} deleted item channels`});
+      } else if (channel.id === team_scav_hunt.discord_pages_channel_id && channel instanceof TextChannel) {
+        console.log(`Refresh on the pages channel initiated by ${interaction.user?.displayName}`)
+        const pages = await Pages.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}});
+        const threads = (await channel.threads.fetchActive()).threads;
+        const archived_threads = (await channel.threads.fetchArchived()).threads;
+        let removed_count = 0;
+        for (const page of pages) {
+          if (!threads.some(t => t.id === page.discord_thread_id) && !archived_threads.some(t => t.id === page.discord_thread_id)) {
+            removed_count += 1;
+            await page.update({discord_thread_id: null});
           }
         }
-        await interaction.reply({flags: MessageFlags.Ephemeral, content: `Refreshed message ${item_message.url}`})
+        await update_pages_message(team_scav_hunt);
+        await interaction.reply({flags: MessageFlags.Ephemeral, content: `Unlinked ${removed_count} deleted page channels`});
+      } else if (channel instanceof ThreadChannel) {
+        const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: channel.id}});
+        const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: channel.id}});
+        if (page) {
+          console.log(`Refresh on the pages item channel for page ${page.page_number} initiated by ${interaction.user?.displayName}`)
+          let page_items_message;
+          try {
+            page_items_message = await channel.messages.edit(page.discord_message_id, {embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
+          } catch (error) {
+            if ((error as RESTError).code === RESTJSONErrorCodes.UnknownMessage) {
+              page_items_message = await channel.send({embeds: [await page_items_embed(team_scav_hunt, page.page_number)]});
+              await page.update({discord_message_id: page_items_message.id})
+            } else {
+              throw error;
+            }
+          }
+          await interaction.reply({flags: MessageFlags.Ephemeral, content: `Refreshed message ${page_items_message.url}`})
+        } else if (item) {
+          console.log(`Refresh on the item channel for item ${item.number} initiated by ${interaction.user?.displayName}`)
+          let item_message;
+          try {
+            item_message = await channel.messages.edit(item.discord_message_id || "0", {embeds: [await item_embed(team_scav_hunt, item)]});
+          } catch (error) {
+            if ((error as RESTError).code === RESTJSONErrorCodes.UnknownMessage) {
+              item_message = await channel.send({embeds: [await item_embed(team_scav_hunt, item)]});
+              await item_message.pin()
+              await item.update({discord_message_id: item_message.id})
+            } else {
+              throw error;
+            }
+          }
+          await interaction.reply({flags: MessageFlags.Ephemeral, content: `Refreshed message ${item_message.url}`})
+        } else {
+          await interaction.reply({flags: MessageFlags.Ephemeral, content: `No known messages in ${interaction.channel} to refresh`})
+        }
       } else {
         await interaction.reply({flags: MessageFlags.Ephemeral, content: `No known messages in ${interaction.channel} to refresh`})
       }
     } else {
-      await interaction.reply({flags: MessageFlags.Ephemeral, content: `No known messages in ${interaction.channel} to refresh`})
+      await interaction.reply({flags: MessageFlags.Ephemeral, content: `Not configured to handle \`/${interaction.commandName}\` in ${interaction.channel}`})
     }
-  } else {
-    await interaction.reply({flags: MessageFlags.Ephemeral, content: `Not configured to handle \`/${interaction.commandName}\` in ${interaction.channel}`})
   }
 });
 
