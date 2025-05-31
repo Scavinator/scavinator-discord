@@ -1,15 +1,18 @@
-import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, PermissionFlagsBits, GuildChannel, TextChannel, AnyThreadChannel, RESTError, Interaction, ChatInputCommandInteraction, ButtonInteraction, ModalMessageModalSubmitInteraction, ModalSubmitInteraction, StringSelectMenuInteraction, DMChannel, GuildMember, Guild, User } from 'discord.js';
+import { Client, Events, GatewayIntentBits, EmbedBuilder, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, PermissionFlagsBits, TextChannel, AnyThreadChannel, RESTError, ChatInputCommandInteraction, ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction, Guild, User, SlashCommandSubcommandBuilder, SlashCommandChannelOption, SlashCommandBooleanOption } from 'discord.js';
 import { REST, Routes } from 'discord.js';
-import { SlashCommandBuilder, SlashCommandChannelOption, SlashCommandIntegerOption, SlashCommandStringOption } from 'discord.js';
-import { Op } from 'sequelize';
+import { SlashCommandBuilder, SlashCommandIntegerOption, SlashCommandStringOption } from 'discord.js';
+import { Op, UniqueConstraintError } from 'sequelize';
 
 import { readFileSync } from 'fs';
-const config = JSON.parse(readFileSync('./config.json', 'utf8'))
-const { token, clientId } = config;
+const { token, clientId } = JSON.parse(readFileSync('./config.json', 'utf8'))
 import { Item } from './models/items';
 import { TeamScavHunts } from './models/teamscavhunts';
 import { Pages } from './models/pages';
 import { ListCategories } from './models/listcategories';
+import { sequelize } from './models/base';
+import { Teams } from './models/teams';
+import { TeamIntegration } from './models/teamintegrations';
+import { ScavHunts } from './models/scavhunts';
 
 const item_command = new SlashCommandBuilder()
     .setName('item')
@@ -47,9 +50,66 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 const rest = new REST().setToken(token);
 
 (async () => {
+  const scav_hunts = await ScavHunts.findAll({limit: 5})
+  function hunt_builder(hunt_required: boolean): SlashCommandSubcommandBuilder {
+    let b = new SlashCommandSubcommandBuilder()
+    if (hunt_required) {
+      b = b.addIntegerOption(new SlashCommandIntegerOption()
+                        .setMinValue(0)
+                        .setName('hunt')
+                        .setDescription('Which hunt is this team configured for?')
+                        .setRequired(true)
+                        .setChoices(scav_hunts.map(sh => ({name: sh.name, value: Number(sh.id)})))
+                       )
+    }
+    return b.addStringOption(new SlashCommandStringOption()
+                           .setName('team-name')
+                           .setDescription('Team name')
+                           .setRequired(true)
+                          )
+            .addChannelOption(new SlashCommandChannelOption()
+                          .setName('items-channel')
+                          .setDescription('Items channel')
+                          .setRequired(true))
+            .addChannelOption(new SlashCommandChannelOption()
+                          .setName('boxes-channel')
+                          .setDescription('Boxes channel')
+                          .setRequired(false))
+  }
+  const setup_command = new SlashCommandBuilder()
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setName('setup')
+    .setDescription('Team configuration functions')
+    .addSubcommand(new SlashCommandSubcommandBuilder()
+                  .setName('server')
+                  .setDescription('Configure this discord server for a particular team')
+                  .addStringOption(new SlashCommandStringOption()
+                                  .setName('affiliation')
+                                  .setDescription('Team affiliation')
+                                  .setRequired(true))
+                  .addBooleanOption(new SlashCommandBooleanOption()
+                                    .setName('virtual')
+                                    .setDescription('Is your team primarily virtual?')
+                                    .setRequired(true)
+                                   )
+                  .addBooleanOption(new SlashCommandBooleanOption()
+                                    .setName('uchicago')
+                                    .setDescription('Is your team affiliated with uchicago?')
+                                    .setRequired(true)
+                                   )
+                  )
+    .addSubcommand(hunt_builder(false)
+                  .setName('testhunt')
+                  .setDescription('Use only for testing. Set up test channels.')
+                  )
+    .addSubcommand(hunt_builder(true)
+                  .setName('hunt')
+                  .setDescription('Set up channels for a new hunt')
+                  )
+
   await rest.put(
     Routes.applicationCommands(clientId),
-    { body: [item_command, refresh_command] },
+    { body: [item_command, refresh_command, setup_command] },
   );
 })();
 
@@ -408,6 +468,45 @@ client.on(Events.InteractionCreate, async interaction => {
   const team_scav_hunt = await TeamScavHunts.findOne({where: {[Op.or]: {discord_items_channel_id: parent_channel_id, discord_pages_channel_id: parent_channel_id}, discord_guild_id: interaction.guildId}});
   if (!(interaction instanceof ChatInputCommandInteraction || interaction instanceof ModalSubmitInteraction || interaction instanceof ButtonInteraction || interaction instanceof StringSelectMenuInteraction)) {
     console.log("Invalid interaction type?", interaction);
+    return
+  }
+  if (interaction.isChatInputCommand() && interaction.commandName === "setup") {
+    if (interaction.options.getSubcommand() === "server") {
+      const affiliation = interaction.options.getString('affiliation');
+      try {
+        await sequelize.transaction(async transaction => {
+          const team = await Teams.create({affiliation, virtual: interaction.options.getBoolean('virtual'), uchicago: interaction.options.getBoolean('uchicago')}, {transaction})
+          await TeamIntegration.create({team_id: team.id, integration_data: interaction.guildId}, {transaction});
+        });
+        await interaction.reply({content: `Team ${affiliation} created! Team management commands will only be available to users with the Manage Server permission in this server.`, flags: MessageFlags.Ephemeral})
+      } catch (e) {
+        if (e instanceof UniqueConstraintError) {
+          await interaction.reply({content: `There is already a team set up for this server`, flags: MessageFlags.Ephemeral})
+        } else {
+          throw e
+        }
+      }
+    } else if (["hunt", "testhunt"].includes(interaction.options.getSubcommand())) {
+      const ti = await TeamIntegration.findOne({where: {integration_data: interaction.guildId}})
+      if (ti === null) {
+        await interaction.reply({content: "There isn't a team connected to this server. Use </setup server:1378047953813639320> to create one", flags: MessageFlags.Ephemeral});
+      } else {
+        const boxes_channel = interaction.options.getChannel('boxes-channel')
+        const items_channel = interaction.options.getChannel('items-channel')
+        if (!(boxes_channel instanceof TextChannel && items_channel instanceof TextChannel)) {
+          await interaction.reply({content: "Invalid channels selected. Must be normal text channels.", flags: MessageFlags.Ephemeral});
+          return
+        }
+        const team_scav_hunt = await TeamScavHunts.create({name: interaction.options.getString('team-name'), team_id: ti.team_id, discord_guild_id: interaction.guildId, discord_items_channel_id: items_channel.id, discord_pages_channel_id: boxes_channel?.id, scav_hunt_id: interaction.options.getInteger('hunt')})
+        await update_items_message(team_scav_hunt, interaction.options.getChannel('items-channel'));
+        if (boxes_channel !== null) {
+          await update_pages_message(team_scav_hunt, boxes_channel);
+        }
+        await interaction.reply({content: "Setup complete!", flags: MessageFlags.Ephemeral});
+      }
+    } else {
+      await interaction.reply({content: "Invalid subcommand. This is a bug. Please report this to the developers.", flags: MessageFlags.Ephemeral})
+    }
     return
   }
   if (!team_scav_hunt) {
