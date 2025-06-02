@@ -4,10 +4,7 @@ import { Op } from 'sequelize';
 
 import { readFileSync } from 'fs';
 const { token, clientId } = JSON.parse(readFileSync('./config.json', 'utf8'))
-import { Item } from './models/items';
-import { TeamScavHunts } from './models/teamscavhunts';
-import { Pages } from './models/pages';
-import { ListCategories } from './models/listcategories';
+import { Item, TeamScavHunts, Pages, ListCategories, ItemIntegration, PageIntegration } from './models/models';
 
 import { update_items_message, itemCreateModal, ADVANCED_ITEM_CREATE_CUSTOM_ID, ITEM_CREATE_CUSTOM_ID } from './lib/items_channel';
 import { handle_create_item } from './lib/item_create';
@@ -31,26 +28,23 @@ client.on(Events.ThreadDelete, async thread => {
   const team_scav_hunt = await TeamScavHunts.findOne({where: {discord_guild_id: thread.guild.id}})
   if (team_scav_hunt === null) return
   if (thread.parent!.id === team_scav_hunt.discord_items_channel_id) {
-    const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id}})
+    const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id}, include: {model: ItemIntegration, where: {integration_data: {thread_id: thread.id}, type: 'discord'}}})
     if (item) {
       console.log(`Item thread deleted for item ${item.number}`)
-      await item.update({discord_thread_id: null});
+      await item.item_integration?.destroy();
       await update_items_message(client, team_scav_hunt, (thread.parent as TextChannel));
-      const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number}});
-      if (page && page.discord_message_id && page.discord_thread_id) {
+      const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number}, include: {model: PageIntegration, where: {type: 'discord'}}});
+      if (page && page.page_integration?.integration_data['message_id'] && page.page_integration?.integration_data['thread_id']) {
         const pages_channel = await thread.guild.channels.fetch(team_scav_hunt.discord_pages_channel_id) as TextChannel | null;
-        if (pages_channel === null) {
-          await page.update({discord_thread_id: null, discord_message_id: null})
-          return
-        }
+        if (pages_channel === null) return
         try {
-          const page_thread = await pages_channel.threads.fetch(page.discord_thread_id);
+          const page_thread = await pages_channel.threads.fetch(page.page_integration.integration_data['thread_id']);
           if (page_thread) {
-            await page_thread.messages.edit(page.discord_message_id, {embeds: [await page_thread_embed(client, team_scav_hunt, page.page_number)]});
+            await page_thread.messages.edit(page.page_integration.integration_data['message_id'], {embeds: [await page_thread_embed(client, team_scav_hunt, page.page_number)]});
           }
         } catch (error) {
           if ((error as RESTError).code === RESTJSONErrorCodes.UnknownChannel) {
-            await page.update({discord_thread_id: null, discord_message_id: null})
+            await page.page_integration?.destroy();
             await update_pages_message(client, team_scav_hunt, pages_channel);
           } else {
             throw error;
@@ -59,10 +53,10 @@ client.on(Events.ThreadDelete, async thread => {
       }
     }
   } else if (thread.parent!.id === team_scav_hunt.discord_pages_channel_id) {
-    const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: thread.id}});
+    const page = await PageIntegration.findOne({where: {integration_data: {thread_id: thread.id}, type: 'discord'}, include: {model: Pages, where: {team_scav_hunt_id: team_scav_hunt.id}}});
     if (page) {
-      console.log(`Page thread for page ${page.page_number} deleted`)
-      await page.update({discord_thread_id: null, discord_message_id: null});
+      console.log(`Page thread for page ${page.page!.page_number} deleted`)
+      await page.destroy();
       await update_pages_message(client, team_scav_hunt, thread.parent as TextChannel);
     }
   }

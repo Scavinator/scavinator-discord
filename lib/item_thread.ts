@@ -1,15 +1,15 @@
 import { EmbedBuilder } from 'discord.js';
-import { Item } from '../models/items';
-import { TeamScavHunts } from '../models/teamscavhunts';
-import { Pages } from '../models/pages';
+import { Item, TeamScavHunts, Pages, PageIntegration } from '../models/models';
 import { Op } from 'sequelize';
 
 export async function item_thread_embed(team_scav_hunt: TeamScavHunts, item: Item) {
   let page_str = "N/A"
   if (item.page_number) {
-    const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number, [Op.not]: {discord_thread_id: null}}})
+    const page = await PageIntegration.findOne({where: {integration_data: {thread_id: {[Op.not]: null}}, type: 'discord'}, include: {model: Pages, where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number}}});
     if (page) {
-      page_str = `<#${page.discord_thread_id!}> (${item.page_number})`
+      page_str = `<#${page.integration_data['thread_id']}> (${item.page_number})`
+    } else {
+      page_str = item.page_number.toString()
     }
   }
   return new EmbedBuilder()

@@ -1,10 +1,7 @@
 import { PermissionFlagsBits, SlashCommandBooleanOption, SlashCommandBuilder, SlashCommandChannelOption, SlashCommandIntegerOption, SlashCommandStringOption, SlashCommandSubcommandBuilder, SlashCommandSubcommandsOnlyBuilder, ChatInputCommandInteraction, MessageFlags, TextChannel } from 'discord.js';
-import { ScavHunts } from '../models/scavhunts';
+import { ScavHunts, Teams, TeamIntegration, TeamScavHunts } from '../models/models';
 import { sequelize } from '../models/base';
 import { UniqueConstraintError } from 'sequelize';
-import { Teams } from '../models/teams';
-import { TeamIntegration } from '../models/teamintegrations';
-import { TeamScavHunts } from '../models/teamscavhunts';
 import { update_items_message } from "../lib/items_channel";
 import { update_pages_message } from "../lib/pages_channel";
 

@@ -1,7 +1,6 @@
 import { RESTError, TextChannel, RESTJSONErrorCodes, Client, EmbedBuilder } from 'discord.js';
 import { Op } from 'sequelize';
-import { TeamScavHunts } from '../models/teamscavhunts';
-import { Pages } from '../models/pages';
+import { TeamScavHunts, Pages, PageIntegration } from '../models/models';
 
 export async function update_pages_message(client: Client, team_scav_hunt: TeamScavHunts, pages_channel: TextChannel | null = null) {
   console.log(Date.now(), "Upd pg msg")
@@ -29,11 +28,11 @@ export async function update_pages_message(client: Client, team_scav_hunt: TeamS
 async function pages_embed(client: Client, team_scav_hunt: TeamScavHunts) {
   console.log(Date.now(), "Gen pg msg")
   const base_embed = new EmbedBuilder().setTitle("Pages");
-  const pages = await Pages.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}, order: [['page_number', 'ASC']]})
+  const pages = await Pages.findAll({where: {team_scav_hunt_id: team_scav_hunt.id}, include: {model: PageIntegration, where: {[Op.not]: {integration_data: {thread_id: null}}}}, order: [['page_number', 'ASC']]})
   if (pages.length === 0) return base_embed
   const threads = (client.guilds.cache.get(team_scav_hunt.discord_guild_id)!.channels.cache.get(team_scav_hunt.discord_pages_channel_id)! as TextChannel).threads;
   const page_str_list = (await Promise.all(pages.map(async page => {
-    const thread = await threads.fetch(page.discord_thread_id, {cache: true}); 
+    const thread = await threads.fetch(page.page_integration!.integration_data['thread_id']!, {cache: true});
     return `- Page ${page.page_number}: ${thread}`
   })));
   console.log(Date.now(), "Done gen pg msg")

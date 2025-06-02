@@ -1,7 +1,5 @@
 import { ButtonBuilder, ActionRowBuilder, RESTError, TextChannel, RESTJSONErrorCodes, Client, EmbedBuilder, ButtonStyle, AnyThreadChannel, TextInputBuilder, TextInputStyle, ModalBuilder } from 'discord.js';
-import { TeamScavHunts } from '../models/teamscavhunts';
-import { ListCategories } from '../models/listcategories';
-import { Item } from '../models/items';
+import { TeamScavHunts, ListCategories, Item, ItemIntegration } from '../models/models';
 import { Op } from 'sequelize';
 
 const ITEMS_CHANNEL_INSTRUCTIONS_EMBED = new EmbedBuilder()
@@ -59,16 +57,16 @@ export async function update_items_message(client: Client, team_scav_hunt: TeamS
 async function items_embed(client: Client, team_scav_hunt: TeamScavHunts) {
   console.log(Date.now(), "Gen items msg")
   const list_categories = Object.fromEntries((await ListCategories.findAll({where: {team_id: {[Op.or]: [null, team_scav_hunt.team_id]}}})).map(category => [category.id, category.name]));
-  const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, [Op.not]: {discord_thread_id: null}}, order: [['number', 'ASC']]})
+  const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id}, include: {model: ItemIntegration, where: {integration_data: {thread_id: {[Op.not]: null}}, type: 'discord'}}, order: [['number', 'ASC']]})
   if (items.length === 0) return []
   const threads = (client.guilds.cache.get(team_scav_hunt.discord_guild_id)!.channels.cache.get(team_scav_hunt.discord_items_channel_id)! as TextChannel).threads;
   const active_threads = (await threads.fetchActive()).threads;
   const archived_threads = (await threads.fetchArchived()).threads;
   const item_list: {[key: string]: any[]} = {};
   for (const item of items) {
-    const thread = active_threads.find((i: AnyThreadChannel) => item.discord_thread_id === i.id) || archived_threads.find((i: AnyThreadChannel) => item.discord_thread_id === i.id);
+    const thread = active_threads.find((i: AnyThreadChannel) => item.item_integration!.integration_data['thread_id'] === i.id) || archived_threads.find((i: AnyThreadChannel) => item.item_integration!.integration_data['thread_id'] === i.id);
     if (!thread) {
-      await item.update({discord_thread_id: null});
+      await item.item_integration!.update({'integration_data.thread_id': null});
     } else {
       const key = item.list_category_id === null ? "Items" : list_categories[item.list_category_id]
       item_list[key] ||= []
