@@ -1,4 +1,4 @@
-import { ButtonBuilder, ActionRowBuilder, RESTError, TextChannel, RESTJSONErrorCodes, Client, EmbedBuilder, ButtonStyle, AnyThreadChannel, TextInputBuilder, TextInputStyle, ModalBuilder } from 'discord.js';
+import { ButtonBuilder, ActionRowBuilder, RESTError, TextChannel, RESTJSONErrorCodes, Client, EmbedBuilder, ButtonStyle, AnyThreadChannel, TextInputBuilder, TextInputStyle, ModalBuilder, ThreadChannel } from 'discord.js';
 import { TeamScavHunts, ListCategories, Item, ItemIntegration } from '../models/models';
 import { Op } from 'sequelize';
 
@@ -57,7 +57,7 @@ export async function update_items_message(client: Client, team_scav_hunt: TeamS
 async function items_embed(client: Client, team_scav_hunt: TeamScavHunts) {
   console.log(Date.now(), "Gen items msg")
   const list_categories = Object.fromEntries((await ListCategories.findAll({where: {team_id: {[Op.or]: [null, team_scav_hunt.team_id]}}})).map(category => [category.id, category.name]));
-  const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id}, include: {model: ItemIntegration, where: {integration_data: {thread_id: {[Op.not]: null}}, type: 'discord'}}, order: [['number', 'ASC']]})
+  const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id}, include: {model: ItemIntegration, where: {integration_data: {thread_id: {[Op.not]: null}}, type: 'discord'}}, order: [['list_category_id', 'DESC', 'NULLS LAST'], ['status', 'ASC'], ['number', 'ASC']]})
   if (items.length === 0) return []
   const threads = (client.guilds.cache.get(team_scav_hunt.discord_guild_id)!.channels.cache.get(team_scav_hunt.discord_items_channel_id)! as TextChannel).threads;
   const active_threads = (await threads.fetchActive()).threads;
@@ -79,18 +79,26 @@ async function items_embed(client: Client, team_scav_hunt: TeamScavHunts) {
     while (items.length > 0) chunked_items.push(items.splice(0, 100))
     return [new EmbedBuilder()
       .setTitle(category)
-      .setDescription((chunked_items.shift() ?? [] ).map(([item, thread]) => `- Item ${item.number}: ${thread}`).join("\n")),
+      .setDescription((chunked_items.shift() ?? [] ).map(([item, thread]) => item_list_element(item, thread)).join("\n")),
       ...chunked_items.map(chunk => {
         return new EmbedBuilder()
-          .setDescription(chunk.map(([item, thread]) => `- Item ${item.number}: ${thread}`).join("\n"))
+          .setDescription(chunk.map(([item, thread]) => item_list_element(item, thread)).join("\n"))
       })
     ]
   }).flat()
 }
 
+function item_list_element(item: Item, thread: ThreadChannel): string {
+  let done_prefix = item.status === 'box' ? '✅ ' : '';
+  return `- ${done_prefix}Item ${item.number}: ${thread}`
+}
+
+export const CREATE_ITEM_MODAL_ID = 'createItemModal';
+export const CREATE_ITEM_MODAL_ID_REGEXP = new RegExp(`^${CREATE_ITEM_MODAL_ID}(?:\\-(\\d+))?$`)
+
 export function itemCreateModal(category: ListCategories | null = null) {
   let modal = new ModalBuilder()
-    .setCustomId(category ? `createItemModal-${category.id}` : 'createItemModal')
+    .setCustomId(category ? `${CREATE_ITEM_MODAL_ID}-${category.id}` : CREATE_ITEM_MODAL_ID)
     .setTitle(category ? `Create ${category.name} Item Thread` : 'Create Item Thread')
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(

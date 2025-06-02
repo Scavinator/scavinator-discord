@@ -4,7 +4,7 @@ import { update_items_message } from '../lib/items_channel';
 import { update_pages_message } from '../lib/pages_channel';
 import { page_thread_embed } from '../lib/page_thread';
 import { Op } from 'sequelize';
-import { item_thread_embed } from '../lib/item_thread';
+import { item_thread_message } from '../lib/item_thread';
 
 export const refresh_command = new SlashCommandBuilder()
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
@@ -63,10 +63,10 @@ export async function refresh_item_thread(interaction: ChatInputCommandInteracti
   console.log(`Refresh on the item channel for item ${item.number} initiated by ${interaction.user?.displayName}`)
   let item_message;
   try {
-    item_message = await thread.messages.edit(integration.integration_data['message_id']!, {embeds: [await item_thread_embed(team_scav_hunt, item)]});
+    item_message = await thread.messages.edit(integration.integration_data['message_id']!, await item_thread_message(team_scav_hunt, item));
   } catch (error) {
     if ((error as RESTError).code === RESTJSONErrorCodes.UnknownMessage) {
-      item_message = await thread.send({embeds: [await item_thread_embed(team_scav_hunt, item)]});
+      item_message = await thread.send(await item_thread_message(team_scav_hunt, item));
       await item_message.pin()
       await integration.update({'integration_data.message_id': item_message.id})
     } else {

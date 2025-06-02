@@ -1,7 +1,7 @@
 import { TextChannel, Client, ChatInputCommandInteraction, ModalSubmitInteraction, MessageFlags, User, Guild, ThreadChannel, RESTJSONErrorCodes, DiscordAPIError } from 'discord.js';
 import { TeamScavHunts, ListCategories, Item, ItemIntegration, Pages, PageIntegration } from '../models/models';
 import { Op } from 'sequelize';
-import { item_thread_embed } from './item_thread';
+import { item_thread_message } from './item_thread';
 import { page_thread_embed } from './page_thread';
 import { update_pages_message } from './pages_channel';
 import { update_items_message } from './items_channel';
@@ -33,7 +33,7 @@ async function* setup_item(client: Client, team_scav_hunt: TeamScavHunts, page_n
   integration.set({'integration_data.thread_id': thread.id})
   await integration.save();
   yield thread
-  const item_message = await thread.send({embeds: [await item_thread_embed(team_scav_hunt, item)]})
+  const item_message = await thread.send(await item_thread_message(team_scav_hunt, item))
   await integration.update({'integration_data.message_id': item_message.id});
   await Promise.all([
     (async () => {

@@ -6,13 +6,15 @@ import { readFileSync } from 'fs';
 const { token, clientId } = JSON.parse(readFileSync('./config.json', 'utf8'))
 import { Item, TeamScavHunts, Pages, ListCategories, ItemIntegration, PageIntegration } from './models/models';
 
-import { update_items_message, itemCreateModal, ADVANCED_ITEM_CREATE_CUSTOM_ID, ITEM_CREATE_CUSTOM_ID } from './lib/items_channel';
+import { update_items_message, itemCreateModal, ADVANCED_ITEM_CREATE_CUSTOM_ID, ITEM_CREATE_CUSTOM_ID, CREATE_ITEM_MODAL_ID_REGEXP } from './lib/items_channel';
 import { handle_create_item } from './lib/item_create';
-import { update_pages_message } from './lib/pages_channel';
+import { PAGE_CHANNEL_SUBMIT_BUTTON_ID, update_pages_message } from './lib/pages_channel';
 import { item_command } from './commands/item';
 import { gen_setup_command, handle_setup } from './commands/setup';
 import { page_thread_embed } from './lib/page_thread';
 import { handle_refresh, refresh_command, refresh_item_thread, refresh_items_channel, refresh_page_thread, refresh_pages_channel } from './commands/refresh';
+import { ITEM_SUBMIT_MODAL, ITEM_SUBMIT_MODAL_ID, ITEM_SUBMIT_MODAL_ID_REGEXP } from './lib/item_submit';
+import { ITEM_THREAD_SUBMIT_BUTTON_ID } from './lib/item_thread';
 
 (async () => {
   const rest = new REST().setToken(token);
@@ -110,6 +112,18 @@ client.on(Events.InteractionCreate, async interaction => {
             )
           )
       ]})
+    } else if (interaction.customId === PAGE_CHANNEL_SUBMIT_BUTTON_ID) {
+      await interaction.showModal(ITEM_SUBMIT_MODAL);
+    } else if (interaction.customId === ITEM_THREAD_SUBMIT_BUTTON_ID) {
+      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: interaction.channelId}});
+      if (item !== null) {
+        await item.update({status: 'box'})
+        const thread = interaction.channel as ThreadChannel;
+        await update_items_message(client, team_scav_hunt, thread.parent as TextChannel)
+        return await interaction.reply({content: 'Item marked as completed!'})
+      } else {
+        return await interaction.reply({content: 'Could not locate item. This is a bug.', flags: MessageFlags.Ephemeral})
+      }
     }
   } else if (interaction.isStringSelectMenu() && interaction instanceof StringSelectMenuInteraction) {
     if (interaction.customId === "listCategory") {
@@ -118,7 +132,38 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.deleteReply();
     }
   } else if (interaction.isModalSubmit()) {
-    const createItemMatch = interaction.customId.match(/^createItemModal(?:\-(\d+))?$/)
+    const submitItemMatch = interaction.customId.match(ITEM_SUBMIT_MODAL_ID_REGEXP)
+    if (submitItemMatch) {
+      // Pull the item
+      // if (has submission notes) {
+      //   store new note somewhere
+      //   send are you sure message
+      //   (elsewhere)
+      //   pull stored message, CAS it in
+      // } else {
+      //   write note out (atomically)
+      //   yay done!
+      // }
+      let item_number;
+      try {
+        item_number = BigInt(interaction.fields.getTextInputValue('itemNumber'));
+      } catch (e) {
+        return await interaction.reply({flags: MessageFlags.Ephemeral, content: `Invalid item number`});
+      }
+      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, number: item_number}})
+      if (item === null) {
+        return await interaction.reply({flags: MessageFlags.Ephemeral, content: `Item number not found`});
+      } else {
+        await item.update({status: 'box'})
+        const items_channel = await interaction.guild!.channels.fetch(item.discord_thread_id) as ThreadChannel;
+        if (items_channel !== null) {
+          await items_channel.send('Marked as done!')
+        }
+        await update_items_message(client, team_scav_hunt)
+        return await interaction.reply({flags: MessageFlags.Ephemeral, content: `Item ${item_number} marked as done!`});
+      }
+    }
+    const createItemMatch = interaction.customId.match(CREATE_ITEM_MODAL_ID_REGEXP)
     if (createItemMatch) {
       const list_category = createItemMatch[1] === undefined ? null : Number(createItemMatch[1])
       let item_number, page_number;
