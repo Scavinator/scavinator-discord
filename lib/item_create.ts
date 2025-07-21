@@ -2,7 +2,7 @@ import { TextChannel, Client, ChatInputCommandInteraction, ModalSubmitInteractio
 import { TeamScavHunts, ListCategories, Item, ItemIntegration, Pages, PageIntegration } from '../models/models';
 import { Op } from 'sequelize';
 import { item_thread_message } from './item_thread';
-import { page_thread_embed } from './page_thread';
+import { page_thread_message } from './page_thread';
 import { update_pages_message } from './pages_channel';
 import { update_items_message } from './items_channel';
 
@@ -15,6 +15,21 @@ async function create_page_thread(page_number: number, pages_channel: TextChanne
   return thread;
 }
 
+export async function item_thread_name(team_scav_hunt: TeamScavHunts, item: Item, integration: ItemIntegration): Promise<string> {
+  let name_prefix;
+  if (item.list_category_id) {
+    const category = (await ListCategories.findOne({where: {id: item.list_category_id, team_id: {[Op.or]: [null, team_scav_hunt.team_id]}}}))!
+    name_prefix = `${category.name} Item`
+  } else {
+    name_prefix = 'Item'
+  }
+  if (item.status === 'box') {
+    name_prefix = `✅ ${name_prefix}`
+  }
+  const name_suffix = integration.integration_data && integration.integration_data['summary'];
+  return name_suffix ? `${name_prefix} ${item.number}: ${name_suffix}` : `${name_prefix} ${item.number}`
+}
+
 // ==========================================
 // The Item-Create-O-Tron
 // ==========================================
@@ -22,13 +37,8 @@ async function create_page_thread(page_number: number, pages_channel: TextChanne
 // These functions are for creating page channels and item channels in-sync
 // They each yield once in order to be run in parallel and both pause after creating a thread but before sending messages
 // This is because the page channel and item have to be created, and *then* the messages can be sent that each contain links to the other
-async function* setup_item(client: Client, team_scav_hunt: TeamScavHunts, page_number: number, name_suffix: string | null, item: Item, integration: ItemIntegration, list_category_id: number | null, item_number: number, user: User, channel: TextChannel) {
-  let name_prefix = "Item"
-  if (list_category_id) {
-    const category = await ListCategories.findOne({where: {id: list_category_id, team_id: {[Op.or]: [null, team_scav_hunt.team_id]}}})
-    name_prefix = `${category!.name} Item`
-  }
-  const thread = await channel.threads.create({ name: name_suffix ? `${name_prefix} ${item_number}: ${name_suffix}` : `${name_prefix} ${item_number}` });
+async function* setup_item(client: Client, team_scav_hunt: TeamScavHunts, page_number: number, name_suffix: string | null, item: Item, integration: ItemIntegration, user: User, channel: TextChannel) {
+  const thread = await channel.threads.create({ name: await item_thread_name(team_scav_hunt, item, integration) });
   await item.update({page_number})
   integration.set({'integration_data.thread_id': thread.id})
   await integration.save();
@@ -58,13 +68,9 @@ async function* setup_page(client: Client, team_scav_hunt: TeamScavHunts, page_n
       integration.set({'integration_data.thread_id': page_thread.id});
       await integration.save();
       yield
-      const message = await page_thread.send({embeds: [await page_thread_embed(client, team_scav_hunt, page_number)]});
-      await integration.update({'integration_data.message_id': message.id});
+      await page_thread_message(page_thread, integration, team_scav_hunt, page_number);
       await Promise.all([
-        (async () => {
-          await message.pin();
-          await page_thread.members.add(user);
-        })(),
+        page_thread.members.add(user),
         update_pages_message(client, team_scav_hunt)
       ])
     } else {
@@ -80,12 +86,9 @@ async function* setup_page(client: Client, team_scav_hunt: TeamScavHunts, page_n
           page_thread.members.add(user),
           (async () => {
             if (integration.integration_data['message_id']) {
-              page_thread.messages.edit(integration.integration_data['message_id'], {embeds: [await page_thread_embed(client, team_scav_hunt, page_number)]})
+              await page_thread_message(page_thread, integration, team_scav_hunt, page_number)
             } else {
-              const msg = await page_thread.send({embeds: [await page_thread_embed(client, team_scav_hunt, page_number)]})
-              integration.set({'integration_data.message_id': msg.id})
-              await integration.save();
-              await msg.pin()
+              await page_thread_message(page_thread, integration, team_scav_hunt, page_number)
             }
           })()
         ])
@@ -131,7 +134,7 @@ export async function handle_create_item(interaction: ChatInputCommandInteractio
   console.log(`${interaction.user?.displayName} is creating item ${item_number} on page ${page_number} (${name_suffix})`)
 
 
-  const item_setup_manager = setup_item(interaction.client, team_scav_hunt, page_number, name_suffix, item, integration, list_category_id, item_number, interaction.user, interaction.channel);
+  const item_setup_manager = setup_item(interaction.client, team_scav_hunt, page_number, name_suffix, item, integration, interaction.user, interaction.channel);
   const page_setup_manager = setup_page(interaction.client, team_scav_hunt, page_number, interaction.user, interaction.guild!);
   const reply = await interaction.reply({flags: MessageFlags.Ephemeral, content: `Setting up item...`})
   console.log(Date.now(), "Starting stages")

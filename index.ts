@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextChannel, RESTError, ChatInputCommandInteraction, ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
+import { Client, Events, GatewayIntentBits, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextChannel, RESTError, ChatInputCommandInteraction, ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction, BaseInteraction, MessageComponentInteraction, TextBasedChannel, SendableChannels, BaseGuildTextChannel, GuildTextBasedChannel } from 'discord.js';
 import { REST, Routes } from 'discord.js';
 import { Op } from 'sequelize';
 
@@ -7,14 +7,14 @@ const { token, clientId } = JSON.parse(readFileSync('./config.json', 'utf8'))
 import { Item, TeamScavHunts, Pages, ListCategories, ItemIntegration, PageIntegration } from './models/models';
 
 import { update_items_message, itemCreateModal, ADVANCED_ITEM_CREATE_CUSTOM_ID, ITEM_CREATE_CUSTOM_ID, CREATE_ITEM_MODAL_ID_REGEXP } from './lib/items_channel';
-import { handle_create_item } from './lib/item_create';
+import { handle_create_item, item_thread_name } from './lib/item_create';
 import { PAGE_CHANNEL_SUBMIT_BUTTON_ID, update_pages_message } from './lib/pages_channel';
 import { item_command } from './commands/item';
 import { gen_setup_command, handle_setup } from './commands/setup';
-import { page_thread_embed } from './lib/page_thread';
+import { page_thread_message } from './lib/page_thread';
 import { handle_refresh, refresh_command, refresh_item_thread, refresh_items_channel, refresh_page_thread, refresh_pages_channel } from './commands/refresh';
-import { ITEM_SUBMIT_MODAL, ITEM_SUBMIT_MODAL_ID, ITEM_SUBMIT_MODAL_ID_REGEXP } from './lib/item_submit';
-import { ITEM_THREAD_SUBMIT_BUTTON_ID } from './lib/item_thread';
+import { ITEM_SUBMIT_MODAL, ITEM_SUBMIT_MODAL_ID, ITEM_SUBMIT_MODAL_ID_REGEXP, ITEM_SUBMIT_MODAL_SUBMISSION_KEY, gen_submission_edit_modal, ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX, ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX_REGEXP, ITEM_SUBMISSION_COMMENT_EDIT_MODAL_PREFIX_REGEXP, ITEM_SUBMISSION_COMMENT_EDIT_TEXT_ID, setItemStatus, ITEM_SUBMISSION_COMMENT_ADD_MODAL_PREFIX_REGEXP } from './lib/item_submit';
+import { item_thread_message, ITEM_THREAD_SUBMIT_BUTTON_ID, ITEM_THREAD_UNSUBMIT_BUTTON_ID } from './lib/item_thread';
 
 (async () => {
   const rest = new REST().setToken(token);
@@ -42,7 +42,7 @@ client.on(Events.ThreadDelete, async thread => {
         try {
           const page_thread = await pages_channel.threads.fetch(page.page_integration.integration_data['thread_id']);
           if (page_thread) {
-            await page_thread.messages.edit(page.page_integration.integration_data['message_id'], {embeds: [await page_thread_embed(client, team_scav_hunt, page.page_number)]});
+            await page_thread_message(page_thread, page.page_integration, team_scav_hunt, page.page_number);
           }
         } catch (error) {
           if ((error as RESTError).code === RESTJSONErrorCodes.UnknownChannel) {
@@ -68,6 +68,14 @@ client.on(Events.MessageCreate, async message => {
   if (message.author.id === clientId && message.type === MessageType.ThreadCreated) {
     await message.delete()
   }
+})
+
+client.rest.on('restDebug', (e) => {
+  console.log("REST DEBUG:", e)
+})
+
+client.rest.on('rateLimited', (e) => {
+  console.log("RATE LIMIT:", e)
 })
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -114,15 +122,30 @@ client.on(Events.InteractionCreate, async interaction => {
       ]})
     } else if (interaction.customId === PAGE_CHANNEL_SUBMIT_BUTTON_ID) {
       await interaction.showModal(ITEM_SUBMIT_MODAL);
-    } else if (interaction.customId === ITEM_THREAD_SUBMIT_BUTTON_ID) {
-      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, discord_thread_id: interaction.channelId}});
-      if (item !== null) {
-        await item.update({status: 'box'})
-        const thread = interaction.channel as ThreadChannel;
-        await update_items_message(client, team_scav_hunt, thread.parent as TextChannel)
-        return await interaction.reply({content: 'Item marked as completed!'})
+    } else if (interaction.customId === ITEM_THREAD_SUBMIT_BUTTON_ID || interaction.customId == ITEM_THREAD_UNSUBMIT_BUTTON_ID) {
+      // Note: Doing this by thread is safe, tested pushing the button, leaving the channel, and then seeing + submitting the modal and it still was attached to the original channel (7/20/2025)
+      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id}, include: {model: ItemIntegration, where: {integration_data: {thread_id: interaction.channelId}}}});
+      if (item?.item_integration) {
+        let newStatus: 'box' | null;
+        if (interaction.customId === ITEM_THREAD_SUBMIT_BUTTON_ID) {
+          // newStatus = 'box';
+          return interaction.showModal(gen_submission_edit_modal(item, true));
+        } else {
+          newStatus = null
+        }
+        await setItemStatus(interaction, team_scav_hunt, item, item.item_integration, newStatus);
       } else {
         return await interaction.reply({content: 'Could not locate item. This is a bug.', flags: MessageFlags.Ephemeral})
+      }
+    } else if (interaction.customId.startsWith(ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX)) {
+      const itemId = interaction.customId.match(ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX_REGEXP);
+      if (itemId !== null) {
+        const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, id: itemId[1]}});
+        if (item !== null) {
+          interaction.showModal(gen_submission_edit_modal(item));
+        } else {
+          interaction.reply({flags: MessageFlags.Ephemeral, content: "Unknown button. If you're seeing this, this is a bug."})
+        }
       }
     }
   } else if (interaction.isStringSelectMenu() && interaction instanceof StringSelectMenuInteraction) {
@@ -134,33 +157,44 @@ client.on(Events.InteractionCreate, async interaction => {
   } else if (interaction.isModalSubmit()) {
     const submitItemMatch = interaction.customId.match(ITEM_SUBMIT_MODAL_ID_REGEXP)
     if (submitItemMatch) {
-      // Pull the item
-      // if (has submission notes) {
-      //   store new note somewhere
-      //   send are you sure message
-      //   (elsewhere)
-      //   pull stored message, CAS it in
-      // } else {
-      //   write note out (atomically)
-      //   yay done!
-      // }
       let item_number;
       try {
         item_number = BigInt(interaction.fields.getTextInputValue('itemNumber'));
       } catch (e) {
         return await interaction.reply({flags: MessageFlags.Ephemeral, content: `Invalid item number`});
       }
-      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, number: item_number}})
-      if (item === null) {
-        return await interaction.reply({flags: MessageFlags.Ephemeral, content: `Item number not found`});
-      } else {
-        await item.update({status: 'box'})
-        const items_channel = await interaction.guild!.channels.fetch(item.discord_thread_id) as ThreadChannel;
-        if (items_channel !== null) {
-          await items_channel.send('Marked as done!')
+      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, number: item_number}, include: {model: ItemIntegration, where: {type: 'discord'}, required: false}})
+      if (item) {
+        await item.update({submission_summary: interaction.fields.getTextInputValue(ITEM_SUBMIT_MODAL_SUBMISSION_KEY)})
+        if (item.item_integration) {
+          return await setItemStatus(interaction, team_scav_hunt, item, item.item_integration, 'box');
+        } else {
+          return await interaction.reply({flags: MessageFlags.Ephemeral, content: `Item number not found`});
         }
-        await update_items_message(client, team_scav_hunt)
-        return await interaction.reply({flags: MessageFlags.Ephemeral, content: `Item ${item_number} marked as done!`});
+      }
+    }
+    const editItemSubmissionMatch = interaction.customId.match(ITEM_SUBMISSION_COMMENT_EDIT_MODAL_PREFIX_REGEXP)
+    const addItemSubmissionMatch = interaction.customId.match(ITEM_SUBMISSION_COMMENT_ADD_MODAL_PREFIX_REGEXP)
+    const itemSubmissionMatch = editItemSubmissionMatch || addItemSubmissionMatch;
+    if (itemSubmissionMatch) {
+      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, id: itemSubmissionMatch[1]}, include: {model: ItemIntegration, where: {type: 'discord'}, required: false}});
+      if (item !== null) {
+        const item_updates: {submission_summary: string, status?: 'box' | null} = {submission_summary: interaction.fields.getTextInputValue(ITEM_SUBMISSION_COMMENT_EDIT_TEXT_ID)};
+        if (addItemSubmissionMatch && item.status !== 'box') {
+          item_updates['status'] = 'box'
+        }
+        await item.update(item_updates)
+        if (addItemSubmissionMatch) {
+          await setItemStatus(interaction, team_scav_hunt, item, item.item_integration!, item.status)
+        } else {
+          const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number}, include: {model: PageIntegration, where: {type: 'discord'}}});
+          if (page?.page_integration?.integration_data === null || !page?.page_integration?.integration_data['thread_id']) return
+          const pages_channel = await interaction.guild!.channels.fetch(team_scav_hunt.discord_pages_channel_id) as TextChannel | null;
+          if (pages_channel === null) return
+          const page_thread = await pages_channel.threads.fetch(page.page_integration.integration_data['thread_id']);
+          if (page_thread === null) return
+          await page_thread_message(page_thread, page.page_integration, team_scav_hunt, page.page_number);
+        }
       }
     }
     const createItemMatch = interaction.customId.match(CREATE_ITEM_MODAL_ID_REGEXP)

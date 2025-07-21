@@ -4,7 +4,7 @@ import { Pages } from './pages';
 
 export class PageIntegration extends Model {
   declare page_id: number
-  declare integration_data: CreationOptional<{thread_id?: string, message_id?: string}>
+  declare integration_data: CreationOptional<{thread_id?: string, message_id?: string, message_ids?: string[]}>
   declare type: string
 
   declare page?: NonAttribute<Pages>;

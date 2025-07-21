@@ -9,7 +9,8 @@ export class Item extends Model {
   declare content: CreationOptional<string>
   declare team_scav_hunt_id: number
   declare list_category_id: CreationOptional<number>
-  declare status: CreationOptional<string>
+  declare status: 'box' | null
+  declare submission_summary: string | null
 
   declare item_integration?: NonAttribute<ItemIntegration>;
 }
@@ -20,6 +21,7 @@ Item.init({
   content: DataTypes.TEXT,
   team_scav_hunt_id: DataTypes.INTEGER,
   list_category_id: DataTypes.INTEGER,
+  submission_summary: DataTypes.TEXT,
   status: DataTypes.ENUM('box')
 }, {
   sequelize,

@@ -4,7 +4,7 @@ import { Item } from './items';
 
 export class ItemIntegration extends Model {
   declare item_id: number
-  declare integration_data: CreationOptional<{thread_id?: string, message_id?: string}>
+  declare integration_data: CreationOptional<{thread_id?: string, message_id?: string, summary?: string}>
   declare type: 'discord'
 
   declare item?: NonAttribute<Item>;
