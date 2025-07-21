@@ -15,8 +15,9 @@ jobs:
       with:
         node-version: 24.x
         cache: 'npm'
-    - run: npm install
+    - run: npm install --production
     - run: npx tsc
+    - run: cp -r node_modules dist/
     - uses: actions/upload-artifact@v4
       with:
         path: dist
