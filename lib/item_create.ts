@@ -10,7 +10,7 @@ async function create_page_thread(page_number: number, pages_channel: TextChanne
   const { threads } = await pages_channel.threads.fetchActive();
   let thread = threads.find(thread => thread.name.toLowerCase().match(new RegExp(`.*page.${page_number}([^\\d].*$|$)`)));
   if (!thread) {
-    thread = await pages_channel.threads.create({ name: `Page ${page_number}` })
+    thread = await pages_channel.threads.create({ name: `Page ${page_number} Box` })
   }
   return thread;
 }

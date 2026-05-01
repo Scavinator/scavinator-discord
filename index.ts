@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextChannel, RESTError, ChatInputCommandInteraction, ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction, BaseInteraction, MessageComponentInteraction, TextBasedChannel, SendableChannels, BaseGuildTextChannel, GuildTextBasedChannel } from 'discord.js';
+import { Client, Events, GatewayIntentBits, MessageType, MessageFlags, RESTJSONErrorCodes, ThreadChannel, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextChannel, RESTError, ChatInputCommandInteraction, ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction, BaseInteraction, MessageComponentInteraction, TextBasedChannel, SendableChannels, BaseGuildTextChannel, GuildTextBasedChannel, Interaction } from 'discord.js';
 import { REST, Routes } from 'discord.js';
 import { Op } from 'sequelize';
 
@@ -81,12 +81,6 @@ client.rest.on('rateLimited', (e) => {
 client.on(Events.InteractionCreate, async interaction => {
   console.log(Date.now(), "Start")
 
-  // Typescript so fun
-  if (!(interaction instanceof ChatInputCommandInteraction || interaction instanceof ModalSubmitInteraction || interaction instanceof ButtonInteraction || interaction instanceof StringSelectMenuInteraction)) {
-    console.log("Invalid interaction type?", interaction);
-    return
-  }
-
   // Setup command doesn't require an existing TeamScavHunt
   if (interaction.isChatInputCommand() && interaction.commandName === "setup") {
     await handle_setup(interaction);
@@ -97,7 +91,10 @@ client.on(Events.InteractionCreate, async interaction => {
   const parent_channel_id = interaction.channel instanceof ThreadChannel ? interaction.channel.parentId : interaction.channelId;
   const team_scav_hunt = await TeamScavHunts.findOne({where: {[Op.or]: {discord_items_channel_id: parent_channel_id, discord_pages_channel_id: parent_channel_id}, discord_guild_id: interaction.guildId}});
   if (!team_scav_hunt) {
-    return await interaction.reply({flags: MessageFlags.Ephemeral, content: "You are not currently in a channel that has been set up for item tracking"});
+    if (interaction.isRepliable()) {
+      await interaction.reply({flags: MessageFlags.Ephemeral, content: "You are not currently in a channel that has been set up for item tracking"});
+    }
+    return;
   }
 
   if (interaction.isButton()) {
