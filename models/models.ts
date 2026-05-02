@@ -7,10 +7,12 @@ import { TeamIntegration } from './teamintegrations';
 import { Teams } from './teams';
 import { ScavHunts } from './scavhunts';
 import { ListCategories } from './listcategories';
+import { ItemSubmission } from './itemsubmissions';
 
 Pages.hasOne(PageIntegration);
 PageIntegration.belongsTo(Pages)
 ItemIntegration.belongsTo(Item);
 Item.hasOne(ItemIntegration);
+Item.hasOne(ItemSubmission);
 
-export {Item, Pages, PageIntegration, ItemIntegration, TeamScavHunts, Teams, TeamIntegration, ScavHunts, ListCategories}
+export {Item, Pages, PageIntegration, ItemIntegration, TeamScavHunts, Teams, TeamIntegration, ScavHunts, ListCategories, ItemSubmission}

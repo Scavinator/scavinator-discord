@@ -5,6 +5,7 @@ import { item_thread_message } from './item_thread';
 import { page_thread_message } from './page_thread';
 import { update_pages_message } from './pages_channel';
 import { update_items_message } from './items_channel';
+import { ItemSubmission } from '../models/itemsubmissions';
 
 async function create_page_thread(page_number: number, pages_channel: TextChannel): Promise<ThreadChannel> {
   const { threads } = await pages_channel.threads.fetchActive();
@@ -23,7 +24,7 @@ export async function item_thread_name(team_scav_hunt: TeamScavHunts, item: Item
   } else {
     name_prefix = 'Item'
   }
-  if (item.status === 'box') {
+  if (await ItemSubmission.findOne({where: {item_id: item.id}})) {
     name_prefix = `✅ ${name_prefix}`
   }
   const name_suffix = integration.integration_data && integration.integration_data['summary'];

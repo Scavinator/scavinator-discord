@@ -15,6 +15,7 @@ import { page_thread_message } from './lib/page_thread';
 import { handle_refresh, refresh_command, refresh_item_thread, refresh_items_channel, refresh_page_thread, refresh_pages_channel } from './commands/refresh';
 import { ITEM_SUBMIT_MODAL, ITEM_SUBMIT_MODAL_ID, ITEM_SUBMIT_MODAL_ID_REGEXP, ITEM_SUBMIT_MODAL_SUBMISSION_KEY, gen_submission_edit_modal, ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX, ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX_REGEXP, ITEM_SUBMISSION_COMMENT_EDIT_MODAL_PREFIX_REGEXP, ITEM_SUBMISSION_COMMENT_EDIT_TEXT_ID, setItemStatus, ITEM_SUBMISSION_COMMENT_ADD_MODAL_PREFIX_REGEXP } from './lib/item_submit';
 import { item_thread_message, ITEM_THREAD_SUBMIT_BUTTON_ID, ITEM_THREAD_UNSUBMIT_BUTTON_ID } from './lib/item_thread';
+import { ItemSubmission } from './models/itemsubmissions';
 
 (async () => {
   const rest = new REST().setToken(token);
@@ -121,25 +122,23 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.showModal(ITEM_SUBMIT_MODAL);
     } else if (interaction.customId === ITEM_THREAD_SUBMIT_BUTTON_ID || interaction.customId == ITEM_THREAD_UNSUBMIT_BUTTON_ID) {
       // Note: Doing this by thread is safe, tested pushing the button, leaving the channel, and then seeing + submitting the modal and it still was attached to the original channel (7/20/2025)
-      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id}, include: {model: ItemIntegration, where: {integration_data: {thread_id: interaction.channelId}}}});
+      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id}, include: [{model: ItemIntegration, where: {integration_data: {thread_id: interaction.channelId}}}, {model: ItemSubmission}]});
       if (item?.item_integration) {
-        let newStatus: 'box' | null;
         if (interaction.customId === ITEM_THREAD_SUBMIT_BUTTON_ID) {
-          // newStatus = 'box';
-          return interaction.showModal(gen_submission_edit_modal(item, true));
+          return interaction.showModal(gen_submission_edit_modal(item, item.item_submission!, true));
         } else {
-          newStatus = null
+          await item.item_submission!.destroy();
+          await setItemStatus(interaction, team_scav_hunt, item, item.item_integration, false);
         }
-        await setItemStatus(interaction, team_scav_hunt, item, item.item_integration, newStatus);
       } else {
         return await interaction.reply({content: 'Could not locate item. This is a bug.', flags: MessageFlags.Ephemeral})
       }
     } else if (interaction.customId.startsWith(ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX)) {
       const itemId = interaction.customId.match(ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX_REGEXP);
       if (itemId !== null) {
-        const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, id: itemId[1]}});
+        const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, id: itemId[1]}, include: ItemSubmission});
         if (item !== null) {
-          interaction.showModal(gen_submission_edit_modal(item));
+          interaction.showModal(gen_submission_edit_modal(item, item.item_submission!));
         } else {
           interaction.reply({flags: MessageFlags.Ephemeral, content: "Unknown button. If you're seeing this, this is a bug."})
         }
@@ -164,7 +163,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (item) {
         await item.update({submission_summary: interaction.fields.getTextInputValue(ITEM_SUBMIT_MODAL_SUBMISSION_KEY)})
         if (item.item_integration) {
-          return await setItemStatus(interaction, team_scav_hunt, item, item.item_integration, 'box');
+          return await setItemStatus(interaction, team_scav_hunt, item, item.item_integration, true);
         } else {
           return await interaction.reply({flags: MessageFlags.Ephemeral, content: `Item number not found`});
         }
@@ -174,15 +173,15 @@ client.on(Events.InteractionCreate, async interaction => {
     const addItemSubmissionMatch = interaction.customId.match(ITEM_SUBMISSION_COMMENT_ADD_MODAL_PREFIX_REGEXP)
     const itemSubmissionMatch = editItemSubmissionMatch || addItemSubmissionMatch;
     if (itemSubmissionMatch) {
-      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, id: itemSubmissionMatch[1]}, include: {model: ItemIntegration, where: {type: 'discord'}, required: false}});
+      const item = await Item.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, id: itemSubmissionMatch[1]}, include: [{model: ItemIntegration, where: {type: 'discord'}, required: false}, ItemSubmission]});
       if (item !== null) {
-        const item_updates: {submission_summary: string, status?: 'box' | null} = {submission_summary: interaction.fields.getTextInputValue(ITEM_SUBMISSION_COMMENT_EDIT_TEXT_ID)};
-        if (addItemSubmissionMatch && item.status !== 'box') {
-          item_updates['status'] = 'box'
+        if (item.item_submission === null) {
+          await ItemSubmission.create({item_id: item.id, instructions: interaction.fields.getTextInputValue(ITEM_SUBMISSION_COMMENT_EDIT_TEXT_ID), submitter_discord_id: interaction.user.id})
+        } else {
+          await item.item_submission!.update({instructions: interaction.fields.getTextInputValue(ITEM_SUBMISSION_COMMENT_EDIT_TEXT_ID), submitter_discord_id: interaction.user.id})
         }
-        await item.update(item_updates)
         if (addItemSubmissionMatch) {
-          await setItemStatus(interaction, team_scav_hunt, item, item.item_integration!, item.status)
+          await setItemStatus(interaction, team_scav_hunt, item, item.item_integration!, true)
         } else {
           const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt.id, page_number: item.page_number}, include: {model: PageIntegration, where: {type: 'discord'}}});
           if (page?.page_integration?.integration_data === null || !page?.page_integration?.integration_data['thread_id']) return
@@ -191,6 +190,7 @@ client.on(Events.InteractionCreate, async interaction => {
           const page_thread = await pages_channel.threads.fetch(page.page_integration.integration_data['thread_id']);
           if (page_thread === null) return
           await page_thread_message(page_thread, page.page_integration, team_scav_hunt, page.page_number);
+          await interaction.reply({flags: MessageFlags.Ephemeral, content: 'Updated!'})
         }
       }
     }

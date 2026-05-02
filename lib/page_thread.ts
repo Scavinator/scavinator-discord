@@ -1,31 +1,31 @@
 import { TextChannel, TextDisplayBuilder, ContainerBuilder, MessageFlags, MessageCreateOptions, MessageEditOptions, SectionBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ThreadChannel, DiscordAPIError, RESTJSONErrorCodes } from 'discord.js';
-import { Item, TeamScavHunts, ItemIntegration, PageIntegration } from '../models/models';
+import { Item, TeamScavHunts, ItemIntegration, PageIntegration, ItemSubmission } from '../models/models';
 import { update_pages_message } from './pages_channel';
 import { ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX } from './item_submit';
 
 type PageThreadComponent = ContainerBuilder | TextDisplayBuilder | SectionBuilder;
 
 export async function page_thread_message(page_thread: ThreadChannel, page_integration: PageIntegration, team_scav_hunt: TeamScavHunts, page_number: number): Promise<void> {
-  const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, page_number, list_category_id: null}, include: {model: ItemIntegration, where: {type: 'discord'}, required: false}, order: [['number', 'ASC']]})
+  const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id, page_number, list_category_id: null}, include: [{model: ItemIntegration, where: {type: 'discord'}, required: false}, {model: ItemSubmission, required: false}], order: [['number', 'ASC']]})
   const messages: (MessageEditOptions & MessageCreateOptions)[] = [];
   let containers: PageThreadComponent[] = [];
   let component_count = 0;
   for (const item of items) {
     // Assemble text to display
-    const status = item.status === 'box' ? '✅' : '❌'
+    const status = item.item_submission ? '✅' : '❌'
     let cts = `### ${status} Item ${item.number}`
     if (item?.item_integration?.integration_data && item.item_integration.integration_data['thread_id']) {
       cts += ` (<#${item.item_integration.integration_data['thread_id']}>)`
     }
-    if (item.submission_summary) {
+    if (item.item_submission) {
       cts += '\n'
-      cts += item.submission_summary.slice(0, 4000 - cts.length)
+      cts += item.item_submission.instructions.slice(0, 4000 - cts.length)
     }
 
     // Compile text into a component
     let new_component_count = 0;
     let container: PageThreadComponent;
-    if (item.submission_summary) {
+    if (item.item_submission) {
       container = new ContainerBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(cts))
       new_component_count += 2;
       container = container.addActionRowComponents(
@@ -37,7 +37,7 @@ export async function page_thread_message(page_thread: ThreadChannel, page_integ
         )
       )
       new_component_count += 2
-    } else if (item.status === 'box') {
+    } else if (item.item_submission) {
       container = new SectionBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(cts))
       new_component_count += 2;
       container = container.setButtonAccessory(

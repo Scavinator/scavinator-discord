@@ -1,5 +1,5 @@
 import { ActionRowBuilder, BaseMessageOptions, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
-import { Item, TeamScavHunts, Pages, PageIntegration, ItemIntegration } from '../models/models';
+import { Item, TeamScavHunts, Pages, PageIntegration, ItemIntegration, ItemSubmission } from '../models/models';
 import { Op } from 'sequelize';
 
 export const ITEM_THREAD_SUBMIT_BUTTON_ID = 'itemThreadSubmit'
@@ -7,7 +7,7 @@ export const ITEM_THREAD_UNSUBMIT_BUTTON_ID = 'itemThreadUnsubmit'
 
 export async function item_thread_message(team_scav_hunt: TeamScavHunts, item: Item): Promise<BaseMessageOptions> {
   let button;
-  if (item.status === 'box') {
+  if (await ItemSubmission.findOne({where: {item_id: item.id}})) {
     button = new ButtonBuilder()
                 .setLabel('Un-submit')
                 .setStyle(ButtonStyle.Danger)

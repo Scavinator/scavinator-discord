@@ -8,6 +8,7 @@ import { item_thread_name } from "./item_create";
 import { update_items_message } from "./items_channel";
 import { item_thread_message } from "./item_thread";
 import { Pages } from "../models/pages";
+import { ItemSubmission } from "../models/itemsubmissions";
 
 // =============================================
 // For the big button in the pages channel
@@ -51,7 +52,7 @@ export const ITEM_SUBMISSION_COMMENT_ADD_MODAL_PREFIX_REGEXP = new RegExp(`^${IT
 
 export const ITEM_SUBMISSION_COMMENT_EDIT_TEXT_ID = 'itemSubmissionEditModalTxt'
 
-export function gen_submission_edit_modal(item: Item, is_new: boolean = false): ModalBuilder {
+export function gen_submission_edit_modal(item: Item, submission: ItemSubmission, is_new: boolean = false): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(`${is_new ? ITEM_SUBMISSION_COMMENT_ADD_MODAL_PREFIX : ITEM_SUBMISSION_COMMENT_EDIT_MODAL_PREFIX}-${item.id}`)
     .setTitle(is_new ? `Submitting Item ${item.number}` : `Editing Item ${item.number} Comment`)
@@ -62,7 +63,7 @@ export function gen_submission_edit_modal(item: Item, is_new: boolean = false): 
           .setLabel('Submission')
           .setRequired(is_new ? false : true)
           .setStyle(TextInputStyle.Paragraph)
-          .setValue(item.submission_summary || '')
+          .setValue(submission.instructions || '')
       ),
     )
 }
@@ -71,8 +72,7 @@ export function gen_submission_edit_modal(item: Item, is_new: boolean = false): 
 // =============================================
 // Item submission management
 // =============================================
-export async function setItemStatus(interaction: MessageComponentInteraction | ModalSubmitInteraction, team_scav_hunt: TeamScavHunts, item: Item, integration: ItemIntegration, newStatus: 'box' | null) {
-  await item.update({status: newStatus})
+export async function setItemStatus(interaction: MessageComponentInteraction | ModalSubmitInteraction, team_scav_hunt: TeamScavHunts, item: Item, integration: ItemIntegration, completed: boolean) {
   const client = interaction.client;
   let item_thread: TextChannel | ThreadChannel | null = null;
   if (integration.integration_data['thread_id']) {
@@ -90,7 +90,7 @@ export async function setItemStatus(interaction: MessageComponentInteraction | M
     })()
   ])
   let statusMsg;
-  if (newStatus === 'box') {
+  if (completed) {
     statusMsg = `Item ${item.number} marked as completed!`
   } else {
     statusMsg = 'Item completion undone'
