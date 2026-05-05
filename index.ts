@@ -16,6 +16,7 @@ import { handle_refresh, refresh_command, refresh_item_thread, refresh_items_cha
 import { ITEM_SUBMIT_MODAL, ITEM_SUBMIT_MODAL_ID, ITEM_SUBMIT_MODAL_ID_REGEXP, ITEM_SUBMIT_MODAL_SUBMISSION_KEY, gen_submission_edit_modal, ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX, ITEM_SUBMISSION_COMMENT_EDIT_BUTTON_PREFIX_REGEXP, ITEM_SUBMISSION_COMMENT_EDIT_MODAL_PREFIX_REGEXP, ITEM_SUBMISSION_COMMENT_EDIT_TEXT_ID, setItemStatus, ITEM_SUBMISSION_COMMENT_ADD_MODAL_PREFIX_REGEXP } from './lib/item_submit';
 import { item_thread_message, ITEM_THREAD_SUBMIT_BUTTON_ID, ITEM_THREAD_UNSUBMIT_BUTTON_ID } from './lib/item_thread';
 import { ItemSubmission } from './models/itemsubmissions';
+import { Client as PgClient } from 'pg'
 
 (async () => {
   const rest = new REST().setToken(token);
@@ -26,6 +27,40 @@ import { ItemSubmission } from './models/itemsubmissions';
 })();
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+
+(async () => {
+  const dbConfig = JSON.parse(readFileSync('./config.json', 'utf8')).database;
+  const pg = await new PgClient(dbConfig).connect()
+
+  pg.on('notification', async (msg) => {
+    console.log(msg);
+    const item = await Item.findOne({where: {id: msg.payload!}, include: {model: ItemIntegration}});
+    if (item) {
+      const team_scav_hunt = await TeamScavHunts.findOne({where: {id: item.team_scav_hunt_id}});
+      const page = await Pages.findOne({where: {team_scav_hunt_id: team_scav_hunt!.id, page_number: item.page_number}, include: {model: PageIntegration}});
+      const items_channel = (await client.channels.fetch(team_scav_hunt!.discord_items_channel_id))!;
+      if (items_channel instanceof TextChannel) {
+        await refresh_items_channel(client, team_scav_hunt!, items_channel)
+      }
+      if (page && page.page_integration) {
+        const channel = (await client.channels.fetch(page.page_integration.integration_data!.thread_id!))!;
+        if (channel.isThread()) {
+          await refresh_page_thread(team_scav_hunt!, page, page.page_integration, channel);
+        }
+      }
+      if (item && item.item_integration) {
+        const channel = (await client.channels.fetch(item.item_integration.integration_data!.thread_id!))!;
+        if (channel.isThread()) {
+          await refresh_item_thread(team_scav_hunt!, item, item.item_integration, channel);
+        }
+      }
+    }
+  })
+  pg.on('error', function(msg) {
+    console.log(msg);
+  })
+  await pg.query("LISTEN item_updates");
+})();
 
 client.on(Events.ThreadDelete, async thread => {
   const team_scav_hunt = await TeamScavHunts.findOne({where: {discord_guild_id: thread.guild.id}})

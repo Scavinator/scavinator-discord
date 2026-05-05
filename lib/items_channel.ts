@@ -59,7 +59,7 @@ export async function update_items_message(client: Client, team_scav_hunt: TeamS
 async function items_embed(client: Client, team_scav_hunt: TeamScavHunts) {
   console.log(Date.now(), "Gen items msg")
   const list_categories = Object.fromEntries((await ListCategories.findAll({where: {team_id: {[Op.or]: [null, team_scav_hunt.team_id]}}})).map(category => [category.id, category.name]));
-  const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id}, include: [{model: ItemIntegration, where: {integration_data: {thread_id: {[Op.not]: null}}, type: 'discord'}}, ItemSubmission], order: [['list_category_id', 'DESC', 'NULLS LAST'], [sequelize.literal('has_submission'), 'DESC'], ['number', 'ASC']], attributes: {include: [sequelize.literal('item_submission.item_id IS NULL AS has_submission') as any]}})
+  const items = await Item.findAll({where: {team_scav_hunt_id: team_scav_hunt.id}, include: [{model: ItemIntegration, where: {integration_data: {thread_id: {[Op.not]: null}}, type: 'discord'}}, ItemSubmission], order: [['list_category_id', 'DESC', 'NULLS LAST'], [sequelize.literal('has_submission'), 'DESC'], ['number', 'ASC']], attributes: {include: [sequelize.literal('item_submission.item_id IS NOT NULL AS has_submission') as any]}})
   if (items.length === 0) return []
   const threads = (client.guilds.cache.get(team_scav_hunt.discord_guild_id)!.channels.cache.get(team_scav_hunt.discord_items_channel_id)! as TextChannel).threads;
   const active_threads = (await threads.fetchActive()).threads;
@@ -91,7 +91,7 @@ async function items_embed(client: Client, team_scav_hunt: TeamScavHunts) {
 }
 
 function item_list_element(item: Item, thread: ThreadChannel): string {
-  let done_prefix = item.item_submission === null ? '✅ ' : '';
+  let done_prefix = item.item_submission !== null ? '✅ ' : '';
   return `- ${done_prefix}Item ${item.number}: ${thread}`
 }
 
