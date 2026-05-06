@@ -117,7 +117,7 @@ export async function handle_create_item(interaction: ChatInputCommandInteractio
   if (interaction.channel === null || !(interaction.channel instanceof TextChannel)) {
     return await interaction.reply({flags: MessageFlags.Ephemeral, content: "Can't create an item from here"})
   }
-  let [item, ] = await Item.findOrCreate({where: { number: item_number, team_scav_hunt_id: team_scav_hunt.id, list_category_id}, defaults: {page_number}});
+  let [item, ] = await Item.findOrCreate({where: { number: item_number, team_scav_hunt_id: team_scav_hunt.id, list_category_id}, defaults: {page_number, digital_submission: false, special_formatting: false}});
   let [integration, ] = await ItemIntegration.findOrBuild({where: {item_id: item.id, type: 'discord'}, defaults: {item_id: item.id, type: 'discord', integration_data: {summary: name_suffix}}});
   if (integration.integration_data && integration.integration_data['thread_id']) {
     console.log(`${interaction.user?.displayName} was redirected to an existing item channel for item ${item_number}`)

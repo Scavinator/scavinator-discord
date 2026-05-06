@@ -17,7 +17,7 @@ export async function page_thread_message(page_thread: ThreadChannel, page_integ
     if (item?.item_integration?.integration_data && item.item_integration.integration_data['thread_id']) {
       cts += ` (<#${item.item_integration.integration_data['thread_id']}>)`
     }
-    if (item.item_submission) {
+    if (item.item_submission?.instructions) {
       cts += '\n'
       cts += item.item_submission.instructions.slice(0, 4000 - cts.length)
     }

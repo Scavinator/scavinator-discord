@@ -17,6 +17,7 @@ import { ITEM_SUBMIT_MODAL, ITEM_SUBMIT_MODAL_ID, ITEM_SUBMIT_MODAL_ID_REGEXP, I
 import { item_thread_message, ITEM_THREAD_SUBMIT_BUTTON_ID, ITEM_THREAD_UNSUBMIT_BUTTON_ID } from './lib/item_thread';
 import { ItemSubmission } from './models/itemsubmissions';
 import { Client as PgClient } from 'pg'
+import { shouldIgnore, addToCache } from './lib/pg_notify_dedupe';
 
 (async () => {
   const rest = new REST().setToken(token);
@@ -33,7 +34,9 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
   const pg = await new PgClient(dbConfig).connect()
 
   pg.on('notification', async (msg) => {
-    console.log(msg);
+    if (shouldIgnore(parseInt(msg.payload!))) {
+      return;
+    }
     const item = await Item.findOne({where: {id: msg.payload!}, include: {model: ItemIntegration}});
     if (item) {
       const team_scav_hunt = await TeamScavHunts.findOne({where: {id: item.team_scav_hunt_id}});

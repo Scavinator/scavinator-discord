@@ -63,7 +63,7 @@ export function gen_submission_edit_modal(item: Item, submission: ItemSubmission
           .setLabel('Submission')
           .setRequired(is_new ? false : true)
           .setStyle(TextInputStyle.Paragraph)
-          .setValue(submission.instructions || '')
+          .setValue(submission?.instructions || '')
       ),
     )
 }
